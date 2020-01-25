@@ -53,9 +53,12 @@ class DxyCrawler:
         :param file_name_append: 文件后缀名
         :return:
         '''
+        dir = 'data'
+        if file_name_append == 'html':
+            dir = '{}/html'.format(dir)
         if update_date_time == 'init_data':
-            return 'data/{}.{}'.format(update_date_time, file_name_append)
-        return 'data/{}_{}.{}'.format(self.__file_name_perfix, update_date_time, file_name_append)
+            return '{}/{}.{}'.format(dir, update_date_time, file_name_append)
+        return '{}/{}_{}.{}'.format(dir, self.__file_name_perfix, update_date_time, file_name_append)
 
     @property
     def html_file_paths(self):
@@ -64,9 +67,9 @@ class DxyCrawler:
         :return:
         '''
         file_paths = []
-        for file_name in os.listdir('data'):
+        for file_name in os.listdir('data/html'):
             if file_name.endswith('.html'):
-                file_paths.append('data/{}'.format(file_name))
+                file_paths.append('data/html/{}'.format(file_name))
         file_paths.sort()
         for path in file_paths:
             yield path
@@ -197,8 +200,6 @@ class DxyCrawler:
                 else:
                     df.to_hdf(self.get_file_path('recent'), self.__h5_key)
                     df.to_excel(self.get_file_path('recent', 'xlsx'))
-                    # df.to_hdf(self.get_file_path(update_date_time), self.__h5_key)
-                    # df.to_excel(self.get_file_path(update_date_time, 'xlsx'))
                     # 备份 html 数据
                     html_path = self.get_file_path(update_date_time, 'html')
                     file = open(html_path, 'w')
