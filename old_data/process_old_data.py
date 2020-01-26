@@ -26,7 +26,9 @@ for i, col in enumerate(old_df.columns):
                 minute = '0{}'.format(time.minute)
             else:
                 minute = time.minute
-            new_index.append(('{}-{}-{}'.format(date.year, '01', date.day), '{}:{}'.format(hour, minute)))
+            month = '0{}'.format(date.month) if date.month < 10 else str(date.month)
+            day = '0{}'.format(date.day) if date.day < 10 else str(date.day)
+            new_index.append(('{}-{}-{}'.format(date.year, month, day), '{}:{}'.format(hour, minute)))
         new_index = pd.MultiIndex.from_tuples(new_index)
         df.index = new_index
         df.index.name = ['日期', '时间']

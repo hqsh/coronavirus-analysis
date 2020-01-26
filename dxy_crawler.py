@@ -1,39 +1,39 @@
 from collections import OrderedDict
 from lxml import etree
+from util import Util, with_logger
 import numpy as np
 import pandas as pd
 import json
-import logging
 import os
 import requests
 import time
 
 
-# 丁香园爬虫
+@with_logger
 class DxyCrawler:
-    logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    '''
+    丁香园爬虫
+    '''
+    # pandas 读写 h5 文件的 key
+    __h5_key = 'dxy_data'
+    # 疫情地图
+    __data_url = 'https://3g.dxy.cn/newh5/view/pneumonia?sf=1&dn=2&from=singlemessage'
+    # 实时播报
+    __news_url = 'https://3g.dxy.cn/newh5/view/pneumonia/timeline'
+    # 保存的文件前缀
+    __file_name_perfix = 'dxy_data'
 
-    def __init__(self, run_mode='live', cities=None):
+    def __init__(self, run_mode='live'):
         '''
         :param run_mode: 执行模式：live 代表从当前最新的数据起，实时更新；init 代表从 init_data 开始，通过历史 html 文件构造出最新数据
-        :param cities: 全国省、直辖市、港澳台都会统计，如果需要额外统计的城市，以列表形式列出
         :return:
         '''
-        # 疫情地图
-        self.__data_url = 'https://3g.dxy.cn/newh5/view/pneumonia?sf=1&dn=2&from=singlemessage'
-        # 实时播报
-        self.__news_url = 'https://3g.dxy.cn/newh5/view/pneumonia/timeline'
-        # 保存的文件前缀
-        self.__file_name_perfix = 'dxy_data'
-        # pandas 读写 h5 文件的 key
-        self.__h5_key = 'dxy_data'
+        self.__key_cities = Util().key_cities
         self.__retry_sleep_seconds = 60
-        self.logger = logging.getLogger(__name__)
         self.__run_mode = run_mode
-        self.__cities = [] if cities is None else cities
         try:
             if self.__run_mode == 'live':
-                path = self.get_file_path('recent')
+                path = self.get_dxy_file_path('recent')
             elif self.__run_mode == 'init':
                 path = self.get_file_path('init_data')
             else:
@@ -42,23 +42,64 @@ class DxyCrawler:
             self.__recent_update_date_time = ' '.join(list(self.__recent_df.index.values[-1]))
         except FileNotFoundError:
             self.logger.warning('没有读取到历史数据')
-            self.__recent_df = self.__recent_update_date_time = None
+            self.__recent_df = None
+            self.__recent_update_date_time = '无历史数据'
         self.logger.info('初始化完成，最近一次统计时间：{}，额外统计的城市：{}'
-                         .format(self.__recent_update_date_time, '、'.join(self.__cities)))
+                         .format(self.__recent_update_date_time, '、'.join(self.__key_cities)))
 
-    def get_file_path(self, update_date_time, file_name_append='h5'):
+    @classmethod
+    def get_file_path(cls, name, file_name_append='h5', file_name_perfix=None):
         '''
         获取存取的文件路径
-        :param update_date_time: 网址更新的日期时间
+        :param name: 名称
         :param file_name_append: 文件后缀名
+        :param file_name_perfix: 文件前缀名
         :return:
         '''
         dir = 'data'
         if file_name_append == 'html':
             dir = '{}/html'.format(dir)
-        if update_date_time == 'init_data':
-            return '{}/{}.{}'.format(dir, update_date_time, file_name_append)
-        return '{}/{}_{}.{}'.format(dir, self.__file_name_perfix, update_date_time, file_name_append)
+        if name == 'init_data' or file_name_perfix is None:
+            return '{}/{}.{}'.format(dir, name, file_name_append)
+        return '{}/{}_{}.{}'.format(dir, cls.__file_name_perfix, name, file_name_append)
+
+    @classmethod
+    def get_dxy_file_path(cls, name, file_name_append='h5'):
+        '''
+        获取存取的文件路径
+        :param name: 名称
+        :param file_name_append: 文件后缀名
+        :return:
+        '''
+        return cls.get_file_path(name, file_name_append, cls.__file_name_perfix)
+
+    @classmethod
+    def load_data_frame(cls, name, file_name_append='h5', file_name_perfix=None):
+        '''
+        加载 pandas DataFrame
+        :param name: 名称
+        :param file_name_append: 文件后缀名
+        :param file_name_perfix: 文件前缀名
+        :return:
+        '''
+        path = cls.get_file_path(name, file_name_append, file_name_perfix)
+        if file_name_append == 'h5':
+            return pd.read_hdf(path, cls.__h5_key)
+        if file_name_append == 'xlsx':
+            return pd.read_excel(path)
+        if file_name_append == 'csv':
+            return pd.read_csv(path)
+        raise ValueError('file_name_append 错误')
+
+    @classmethod
+    def load_dxy_data_frame(cls, name, file_name_append='h5'):
+        '''
+        加载 pandas DataFrame
+        :param name: 名称
+        :param file_name_append: 文件后缀名
+        :return:
+        '''
+        return cls.load_data_frame(name, file_name_append, cls.__file_name_perfix)
 
     @property
     def html_file_paths(self):
@@ -74,9 +115,24 @@ class DxyCrawler:
         for path in file_paths:
             yield path
 
-    def crawl_data(self):
+    def __save_recent_files(self, html_text=None):
         '''
-        持续爬取更新的数据，并合并历史数据，保存到文件中
+        保存最新全量爬取的数据，excel 数据只用来看，pandas 读取后需要额外调整格式，麻烦，所以存取历史数据用 h5 文件；以及 html 文件
+        :param html_text: html 原始文本，live 模式执行，要保存 html，需要填此参数
+        :return:
+        '''
+        if self.__run_mode == 'live' and html_text is not None:
+            # 备份 html 数据
+            html_path = self.get_dxy_file_path(self.__recent_update_date_time, 'html')
+            file = open(html_path, 'w')
+            file.writelines(html_text)
+            file.close()
+        self.__recent_df.to_hdf(self.get_dxy_file_path('recent'), self.__h5_key)
+        self.__recent_df.to_excel(self.get_dxy_file_path('recent', 'xlsx'))
+
+    def run(self):
+        '''
+        持续爬取更新的数据或重演历史数据，合并和更新数据，保存到文件中
         :return:
         '''
         is_first_loop = True
@@ -91,7 +147,7 @@ class DxyCrawler:
                     try:
                         file_path = html_file_paths.__next__()
                     except StopIteration:
-                        self.logger.info('历史数据构造完成')
+                        self.logger.info('历史数据处理完，开始写入到文件')
                         break
                     file = open(file_path)
                     lines = file.readlines()
@@ -141,7 +197,7 @@ class DxyCrawler:
                     if province == '湖北':
                         for city_info in info['cities']:
                             city = city_info['cityName']
-                            if city in self.__cities:
+                            if city in self.__key_cities:
                                 data[city] = OrderedDict()
                                 data[city]['确诊'] = city_info['confirmedCount']
                                 data[city]['疑似'] = city_info['suspectedCount']
@@ -193,27 +249,18 @@ class DxyCrawler:
                 total_df = pd.DataFrame(total_data, index=df.index)
                 total_df.columns = pd.MultiIndex.from_product([['全国'], total_df.columns.values])
                 df = pd.concat([total_df, df], axis=1)
-                # excel 数据只用来看，pandas 读取后需要额外调整格式，麻烦，所以存取历史数据用 h5 文件
-                if self.__run_mode == 'init':
-                    df.to_hdf(self.get_file_path('recent'), self.__h5_key)
-                    df.to_excel(self.get_file_path('recent', 'xlsx'))
-                else:
-                    df.to_hdf(self.get_file_path('recent'), self.__h5_key)
-                    df.to_excel(self.get_file_path('recent', 'xlsx'))
-                    # 备份 html 数据
-                    html_path = self.get_file_path(update_date_time, 'html')
-                    file = open(html_path, 'w')
-                    file.writelines(html_text)
-                    file.close()
                 self.__recent_df = df
                 self.__recent_update_date_time = update_date_time
+                # 保存数据
+                self.__save_recent_files(html_text)
                 self.logger.info('数据已更新，更新日期时间：{}'.format(update_date_time))
-            except RuntimeError as e:
+            except Exception as e:
                 self.logger.error('未知异常：{}，{} 秒后重试'.format(e, self.__retry_sleep_seconds))
+        self.__save_recent_files()
+        self.logger.info('历史数据构造完成')
 
 
 if __name__ == '__main__':
-    # run_mode = 'init'
-    run_mode = 'live'
-    crawler = DxyCrawler(run_mode, ['武汉'])
-    crawler.crawl_data()
+    run_modes = {1: 'init', 2: 'live'}
+    crawler = DxyCrawler(run_modes[2])
+    crawler.run()
