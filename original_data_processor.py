@@ -3,7 +3,7 @@ try:
 except ImportError:
     geodesic = None
 from math import asin, cos, radians, sin, sqrt
-from util import Util, with_logger
+from util.util import Util, with_logger
 import numpy as np
 import pandas as pd
 

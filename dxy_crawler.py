@@ -1,6 +1,6 @@
 from collections import OrderedDict
 from lxml import etree
-from util import Util, with_logger
+from util.util import Util, with_logger
 import numpy as np
 import pandas as pd
 import json
@@ -242,10 +242,11 @@ class DxyCrawler:
                 total_data = OrderedDict()
                 for key in df.columns.levels[1]:
                     for province in provinces:
-                        if key not in total_data:
-                            total_data[key] = df[province][key].values
-                        else:
-                            total_data[key] += df[province][key].values
+                        if province not in self.__key_cities:
+                            if key not in total_data:
+                                total_data[key] = df[province][key].values
+                            else:
+                                total_data[key] += df[province][key].values
                 total_df = pd.DataFrame(total_data, index=df.index)
                 total_df.columns = pd.MultiIndex.from_product([['全国'], total_df.columns.values])
                 df = pd.concat([total_df, df], axis=1)

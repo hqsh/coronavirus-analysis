@@ -1,5 +1,5 @@
 from dxy_crawler import DxyCrawler
-from util import with_logger
+from util.util import with_logger
 import pandas as pd
 
 
