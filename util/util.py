@@ -53,8 +53,10 @@ class Util(Singleton):
                 reversed_option.reverse()
                 reversed_option = '_'.join(reversed_option)
                 reversed_key = '{}-{}'.format(section, reversed_option)
-                self.__region_info[reversed_key] = {capital: province for province, capital in
-                                                    self.get_region_info(section, option, copy=False).items()}
+                self.__region_info[reversed_key] = {}
+                for province, capital in self.get_region_info(section, option, copy=False).items():
+                    self.__region_info[reversed_key][capital] = province
+                    self.__city_to_region[capital] = province
 
     def get_config(self, section, option):
         '''
