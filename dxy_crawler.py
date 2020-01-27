@@ -203,6 +203,7 @@ class DxyCrawler:
                                 data[city]['疑似'] = city_info['suspectedCount']
                                 data[city]['死亡'] = city_info['deadCount']
                                 data[city]['治愈'] = city_info['curedCount']
+                                data[city]['是否更新'] = False
                                 provinces.append(city)
                     provinces.append(province)
                     data[province] = OrderedDict()
@@ -210,6 +211,7 @@ class DxyCrawler:
                     data[province]['疑似'] = info['suspectedCount']
                     data[province]['死亡'] = info['deadCount']
                     data[province]['治愈'] = info['curedCount']
+                    data[province]['是否更新'] = False
                     try:
                         for comment in info['comment'].split('，'):
                             for key in ['死亡', '治愈']:
@@ -246,14 +248,26 @@ class DxyCrawler:
                             if key not in total_data:
                                 total_data[key] = df[province][key].values
                             else:
-                                total_data[key] += df[province][key].values
+                                if key == '是否更新':
+                                    total_data[key] |= df[province][key].values
+                                else:
+                                    total_data[key] += df[province][key].values
                 total_df = pd.DataFrame(total_data, index=df.index)
                 total_df.columns = pd.MultiIndex.from_product([['全国'], total_df.columns.values])
                 df = pd.concat([total_df, df], axis=1)
+                # 设置是否更新字段
+                index_1 = df.index[-1]
+                index_2 = df.index[-2]
+                for region in df.columns.levels[0]:
+                    for col in ['确诊', '死亡', '疑似', '治愈']:
+                        if df.loc[index_1, (region, col)] != df.loc[index_2, (region, col)]:
+                            df.loc[index_1, (region, '是否更新')] = 1
+                            break
                 self.__recent_df = df
                 self.__recent_update_date_time = update_date_time
                 # 保存数据
-                self.__save_recent_files(html_text)
+                if self.__run_mode == 'live':
+                    self.__save_recent_files(html_text)
                 self.logger.info('数据已更新，更新日期时间：{}'.format(update_date_time))
             except Exception as e:
                 self.logger.error('未知异常：{}，{} 秒后重试'.format(e, self.__retry_sleep_seconds))
