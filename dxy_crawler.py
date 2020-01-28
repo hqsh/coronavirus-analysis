@@ -309,7 +309,7 @@ class DxyCrawler:
                 index_1 = df.index[-1]
                 index_2 = df.index[-2]
                 for region in df.columns.levels[0]:
-                    for col in ['确诊', '死亡', '疑似', '治愈']:
+                    for col in ['确诊']:
                         if df.loc[index_1, (region, col)] != df.loc[index_2, (region, col)]:
                             df.loc[index_1, (region, '是否更新')] = 1
                             break

@@ -60,8 +60,9 @@ for region in df.columns.levels[0]:
     df_region = df[region].copy()
     arr_is_updated = np.zeros(shape=df_region.shape[0], dtype=np.bool)
     for col in df_region.columns:
-        arr = df_region[col].values
-        arr_is_updated[1:] |= arr[1:] != arr[:-1]
+        if col == '确诊':
+            arr = df_region[col].values
+            arr_is_updated[1:] |= arr[1:] != arr[:-1]
     df_region['是否更新'] = arr_is_updated
     df_region.columns = pd.MultiIndex.from_product([[region], df_region.columns.values])
     dfs.append(df_region)
