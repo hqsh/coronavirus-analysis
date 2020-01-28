@@ -103,11 +103,13 @@ class OriginalDataProcessor:
             df.loc[region, col] = population
             if city in self.__key_cities:
                 df.loc[city, col] += population
+        df['流动人口占比'] = df['流动人口'].values / df['人口'].values
         df.loc['全国', col] = df[col].values.sum() - df[col][self.__key_cities].values.sum()
         # (4) 处理各地面积数据
         data = pd.read_csv('data/original/全国各地面积.csv', ' ')
         data = data.set_index('地区')
         df['面积'] = data['面积（万平方千米）']
+        df['人均面积'] = df['面积'].values / df['人口'].values * 10000 * 1000 * 1000  # 单位：平方米
         df.loc['全国', '面积'] = 0
         df.loc['全国', '面积'] = df['面积'].values.sum() - df['面积'][self.__key_cities].values.sum()
         # (5) 处理各地海拔数据

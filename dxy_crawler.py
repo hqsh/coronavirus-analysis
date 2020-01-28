@@ -3,6 +3,7 @@ from lxml import etree
 from util.util import Util, with_logger
 import numpy as np
 import pandas as pd
+import datetime
 import json
 import os
 import requests
@@ -44,6 +45,9 @@ class DxyCrawler:
             self.logger.warning('没有读取到历史数据')
             self.__recent_df = None
             self.__recent_update_date_time = '无历史数据'
+        self.__recent_daily_df = None
+        self.__recent_daily_inc_df = None
+        self.__sorted_provinces = None
         self.logger.info('初始化完成，最近一次统计时间：{}，额外统计的城市：{}'
                          .format(self.__recent_update_date_time, '、'.join(self.__key_cities)))
 
@@ -56,7 +60,7 @@ class DxyCrawler:
         :param file_name_perfix: 文件前缀名
         :return:
         '''
-        dir = 'data'
+        dir = 'data/virus' if file_name_append in ['h5', 'xlsx'] else 'data'
         if file_name_append == 'html':
             dir = '{}/html'.format(dir)
         if name == 'init_data' or file_name_perfix is None:
@@ -127,8 +131,54 @@ class DxyCrawler:
             file = open(html_path, 'w')
             file.writelines(html_text)
             file.close()
-        self.__recent_df.to_hdf(self.get_dxy_file_path('recent'), self.__h5_key)
-        self.__recent_df.to_excel(self.get_dxy_file_path('recent', 'xlsx'))
+        self.__calc_daily()
+        for df, name in zip([self.__recent_df, self.__recent_daily_df, self.__recent_daily_inc_df],
+                            ['recent', 'recent_daily', 'recent_daily_inc']):
+            df.to_hdf(self.get_dxy_file_path(name), self.__h5_key)
+            df.to_excel(self.get_dxy_file_path(name, 'xlsx'))
+
+    def __calc_daily(self):
+        '''
+        将数据转换成日频和日频增量数据，如果当天有更新，每列取当天第一条更新的数据
+        :return:
+        '''
+        first_date = self.__recent_df.index.levels[0][0]
+        last_date = self.__recent_df.index.levels[0][-1]
+        year, month, day = first_date.split('-')
+        date = datetime.date(year=int(year), month=int(month), day=int(day))
+        year, month, day = last_date.split('-')
+        last_date = datetime.date(year=int(year), month=int(month), day=int(day))
+        index = []
+        while date <= last_date:
+            index.append(str(date))
+            date += datetime.timedelta(days=1)
+        arr = np.zeros(shape=(len(index), int(self.__recent_df.shape[1] * 4 / 5)), dtype=np.float64)
+        arr[:] = np.nan
+        df = pd.DataFrame(arr)
+        df.index = pd.Index(index, name='日期')
+        cols = self.__recent_df.columns.levels[1].tolist()
+        cols.remove('是否更新')
+        df.columns = pd.MultiIndex.from_product([self.__recent_df.columns.levels[0].tolist(), cols])
+        for idx in index:
+            if idx in self.__recent_df.index.levels[0]:
+                df_all_sliced = self.__recent_df.loc[idx]
+                for region in df_all_sliced.columns.levels[0]:
+                    df_sliced = df_all_sliced[region]
+                    i = None
+                    for i, is_updated in enumerate(df_sliced['是否更新']):
+                        if is_updated:
+                            break
+                    if i is not None:
+                        for col in cols:
+                            df.loc[idx, (region, col)] = df_sliced[col][i]
+        df.fillna(0, inplace=True)
+        df = df.loc['2020-01-11':]  # 2020-01-11 之前的数据有大量缺失和不准，去掉
+        sorted_provinces = ['全国'] + self.__sorted_provinces
+        self.__recent_daily_df = df[sorted_provinces]
+        arr = self.__recent_daily_df.values
+        arr = arr[1:] - arr[:-1]
+        df = pd.DataFrame(arr, index=self.__recent_daily_df.index[1:], columns=self.__recent_daily_df.columns)
+        self.__recent_daily_inc_df = df[sorted_provinces]
 
     def run(self):
         '''
@@ -191,7 +241,7 @@ class DxyCrawler:
                 infos_text = infos_text.split('}catch(e)')[0]
                 infos = json.loads(infos_text)
                 data = OrderedDict()
-                provinces = []
+                self.__sorted_provinces = []
                 for info in infos:
                     province = info['provinceShortName']
                     if province == '湖北':
@@ -204,8 +254,8 @@ class DxyCrawler:
                                 data[city]['死亡'] = city_info['deadCount']
                                 data[city]['治愈'] = city_info['curedCount']
                                 data[city]['是否更新'] = False
-                                provinces.append(city)
-                    provinces.append(province)
+                                self.__sorted_provinces.append(city)
+                    self.__sorted_provinces.append(province)
                     data[province] = OrderedDict()
                     data[province]['确诊'] = info['confirmedCount']
                     data[province]['疑似'] = info['suspectedCount']
@@ -235,7 +285,7 @@ class DxyCrawler:
                 df.index.names = ['日期', '时间']
                 if self.__recent_df is not None:
                     df = self.__recent_df.append(df)
-                df = df[provinces]
+                df = df[self.__sorted_provinces]
                 # 处理空数据
                 df.fillna(method='pad', inplace=True)
                 df.fillna(0, inplace=True)
@@ -243,7 +293,7 @@ class DxyCrawler:
                 # 计算全国数据
                 total_data = OrderedDict()
                 for key in df.columns.levels[1]:
-                    for province in provinces:
+                    for province in self.__sorted_provinces:
                         if province not in self.__key_cities:
                             if key not in total_data:
                                 total_data[key] = df[province][key].values

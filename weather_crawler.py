@@ -1,6 +1,7 @@
 from collections import OrderedDict
 from util.util import Util, with_logger
 from lxml import etree
+import numpy as np
 import pandas as pd
 import datetime
 import os
@@ -23,20 +24,34 @@ class WeatherCrawler:
     __file_path = 'data/weather'
     # 合法的天气和对应的数字数据
     __weather_info = {
-        '晴': {'晴朗度': 3, '降雨量': 0, '降雪量': 0}, '多云': {'晴朗度': 2, '降雨量': 0, '降雪量': 0},
-        '阴': {'晴朗度': 1, '降雨量': 0, '降雪量': 0}, '雾': {'晴朗度': -1, '降雨量': 0, '降雪量': 0},
-        '大雾': {'晴朗度': -2, '降雨量': 0, '降雪量': 0}, '霾': {'晴朗度': -3, '降雨量': 0, '降雪量': 0},
-        '中度霾': {'晴朗度': -4, '降雨量': 0, '降雪量': 0}, '重度霾': {'晴朗度': -5, '降雨量': 0, '降雪量': 0},
-        '阵雨': {'晴朗度': 0, '降雨量': 1, '降雪量': 0}, '小雨': {'晴朗度': 0, '降雨量': 2, '降雪量': 0},
-        '小到中雨': {'晴朗度': 0, '降雨量': 3, '降雪量': 0}, '中雨': {'晴朗度': 0, '降雨量': 4, '降雪量': 0},
-        '中到大雨': {'晴朗度': 0, '降雨量': 5, '降雪量': 0}, '大雨': {'晴朗度': 0, '降雨量': 6, '降雪量': 0},
-        '雨夹雪': {'晴朗度': 0, '降雨量': 3, '降雪量': 3}, '阵雪': {'晴朗度': 0, '降雨量': 0, '降雪量': 1},
-        '小雪': {'晴朗度': 0, '降雨量': 0, '降雪量': 2}, '小到中雪': {'晴朗度': 0, '降雨量': 0, '降雪量': 3},
-        '中雪': {'晴朗度': 0, '降雨量': 0, '降雪量': 4}, '中到大雪': {'晴朗度': 0, '降雨量': 0, '降雪量': 5},
-        '大雪': {'晴朗度': 0, '降雨量': 0, '降雪量': 6}
+        '晴': {'晴朗度': 3, '雾度': 0, '霾度': 0, '降雨量': 0, '降雪量': 0},
+        '多云': {'晴朗度': 2, '雾度': 0, '霾度': 0, '降雨量': 0, '降雪量': 0},
+        '阴': {'晴朗度': 1, '雾度': 0, '霾度': 0, '降雨量': 0, '降雪量': 0},
+        '雾': {'晴朗度': 0, '雾度': 1, '霾度': 0, '降雨量': 0, '降雪量': 0},
+        '大雾': {'晴朗度': 0, '雾度': 2, '霾度': 0, '降雨量': 0, '降雪量': 0},
+        '霾': {'晴朗度': 0, '雾度': 0, '霾度': 1, '降雨量': 0, '降雪量': 0},
+        '中度霾': {'晴朗度': 0, '雾度': 0, '霾度': 2, '降雨量': 0, '降雪量': 0},
+        '重度霾': {'晴朗度': 0, '雾度': 0, '霾度': 3, '降雨量': 0, '降雪量': 0},
+        '阵雨': {'晴朗度': 0, '雾度': 0, '霾度': 0, '降雨量': 1, '降雪量': 0},
+        '小雨': {'晴朗度': 0, '雾度': 0, '霾度': 0, '降雨量': 2, '降雪量': 0},
+        '小到中雨': {'晴朗度': 0, '雾度': 0, '霾度': 0, '降雨量': 3, '降雪量': 0},
+        '中雨': {'晴朗度': 0, '雾度': 0, '霾度': 0, '降雨量': 4, '降雪量': 0},
+        '中到大雨': {'晴朗度': 0, '雾度': 0, '霾度': 0, '降雨量': 5, '降雪量': 0},
+        '大雨': {'晴朗度': 0, '雾度': 0, '霾度': 0, '降雨量': 6, '降雪量': 0},
+        '雨夹雪': {'晴朗度': 0, '雾度': 0, '霾度': 0, '降雨量': 3, '降雪量': 3},
+        '阵雪': {'晴朗度': 0, '雾度': 0, '霾度': 0, '降雨量': 0, '降雪量': 1},
+        '小雪': {'晴朗度': 0, '雾度': 0, '霾度': 0, '降雨量': 0, '降雪量': 2},
+        '小到中雪': {'晴朗度': 0, '雾度': 0, '霾度': 0, '降雨量': 0, '降雪量': 3},
+        '中雪': {'晴朗度': 0, '雾度': 0, '霾度': 0, '降雨量': 0, '降雪量': 4},
+        '中到大雪': {'晴朗度': 0, '雾度': 0, '霾度': 0, '降雨量': 0, '降雪量': 5},
+        '大雪': {'晴朗度': 0, '雾度': 0, '霾度': 0, '降雨量': 0, '降雪量': 6}
     }
     # 合法的风向
     __wind_directions = ['无持续风向', '东风', '南风', '西风', '北风', '东南风', '东北风', '西南风', '西北风']
+
+    @property
+    def weather_info(self):
+        return pd.DataFrame(self.__weather_info)
 
     @classmethod
     def get_weather_df(cls):
@@ -92,7 +107,8 @@ class WeatherCrawler:
                     idx = 0
                     weather_by_region[region] = OrderedDict()
                     for key in ['日期', '上午天气', '下午天气', '上午温度', '下午温度', '风向', '最低风速', '最高风速',
-                                '上午晴朗度', '上午降雨量', '上午降雪量', '下午晴朗度', '下午降雨量', '下午降雪量']:
+                                '上午晴朗度', '上午雾度', '上午霾度', '上午降雨量', '上午降雪量', '下午晴朗度', '下午雾度',
+                                '下午霾度', '下午降雨量', '下午降雪量']:
                         weather_by_region[region][key] = []
                     for node in nodes:
                         text = self.__util.str_replace_to_single(node.text).strip()
@@ -115,9 +131,9 @@ class WeatherCrawler:
                                 # 对天气数据进行处理，根据上午/下午的天气，转换并增加上午/下午的晴朗度、降雨量、降雪量 3 个字段
                                 for str_weather, str_apm in zip([str_am_weather, str_pm_weather], ['上午', '下午']):
                                     weather_info = self.__weather_info[str_weather]
-                                    weather_by_region[region]['{}晴朗度'.format(str_apm)].append(weather_info['晴朗度'])
-                                    weather_by_region[region]['{}降雨量'.format(str_apm)].append(weather_info['降雨量'])
-                                    weather_by_region[region]['{}降雪量'.format(str_apm)].append(weather_info['降雪量'])
+                                    for factor in ['晴朗度', '雾度', '霾度', '降雨量', '降雪量']:
+                                        weather_by_region[region]['{}{}'.format(str_apm, factor)]\
+                                            .append(weather_info[factor])
                             elif idx == 3:
                                 # 温度
                                 am_temperature, pm_temperature = text.replace('℃', '').split(' / ')
@@ -184,6 +200,66 @@ class WeatherCrawler:
             df.to_hdf('{}/{}_{}.h5'.format(self.__file_path, self.__file_name_perfix, year_month), self.__h5_key)
             self.logger.info('{} 的天气处理完毕'.format(year_month))
             date -= datetime.timedelta(days=1)
+
+    def get_weather_average_data(self, df_virus_daily, start_shift=14, end_shift=3):
+        '''
+        获取天气的加权（权重值线性递增）平均数据，从地区有首例确诊病人往前找 start_shift 天，到 end_shift 天前，之间的数据取均值
+        专家分析：从已有病例来看，这一新型冠状病毒的潜伏期平均7天左右，短的2到3天，长的12天
+        :param df_virus_daily: 各地疫情日频数据
+        :param start_shift: 默认取最大潜伏期的值
+        :param end_shift: 默认取最小潜期的伏值
+        :return:
+        '''
+        regions = df_virus_daily.columns.levels[0].tolist()
+        regions.remove('全国')  # 去掉全国
+        df_virus_daily = df_virus_daily[regions]
+        df_weather = self.get_weather_df()
+        regions = df_weather.columns.levels[0].tolist()
+        df_all = pd.concat([df_virus_daily, df_weather], axis=1)
+        end_idx = df_all.index.values.searchsorted(df_all.index[-1]) - end_shift + 1
+        ss = []
+        for region in regions:
+            df_region = df_all[region]
+            if region in ['武汉', '湖北'] or '确诊' not in df_region.columns:
+                start_date = '2019-12-15' if region in ['武汉', '湖北'] else '2020-01-01'
+                start_idx = df_region.index.values.searchsorted(start_date)
+            else:
+                arr = df_region['确诊'].values
+                arr[np.isnan(arr)] = 0
+                start_idx = (arr != 0).argmax() - start_shift
+            df_region = df_region.iloc[start_idx: end_idx]
+            for col in ['温度', '风速', '晴朗度', '雾度', '霾度', '降雨量', '降雪量']:
+                prefix = ['最低', '最高'] if col == '风速' else ['上午', '下午']
+                val = None
+                for pre in prefix:
+                    if val is None:
+                        val = df_region['{}{}'.format(pre, col)].values
+                    else:
+                        val += df_region['{}{}'.format(pre, col)].values
+                df_region['日均{}'.format(col)] = val / 2
+            s = pd.Series([])
+            for col in ['上午温度', '下午温度', '日均温度',
+                        '最低风速', '最高风速', '日均风速',
+                        '上午晴朗度', '下午晴朗度', '日均晴朗度',
+                        '上午雾度', '下午雾度', '日均雾度',
+                        '上午霾度', '下午霾度', '日均霾度',
+                        '上午降雨量', '下午降雨量', '日均降雨量',
+                        '上午降雪量', '下午降雪量', '日均降雪量',
+                        ]:
+                mean_col = '平均{}'.format(col)
+                s[mean_col] = df_region[col].mean()
+                weight_col = '加权平均{}'.format(col)
+                weights = np.arange(1, df_region.shape[0] + 1)  # 线性递增权重
+                down_cnt = 7 - end_shift  # 平均潜伏期后的 down_cnt 天的权重线性递减
+                for i, down_val in zip(np.arange(1, down_cnt + 1), np.arange(1, down_cnt + 1)[::-1]):
+                    weights[-i] -= down_val * 2
+                # print('{} 天气数据的加权平均权重：{}'.format(region, weights))
+                s[weight_col] = np.average(df_region[col].values, weights=weights)
+            s.name = region
+            ss.append(s)
+        df = pd.concat(ss, axis=1).T
+        df.index.name = '地区'
+        return df
 
 
 if __name__ == '__main__':
