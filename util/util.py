@@ -1,6 +1,8 @@
 from configparser import ConfigParser
 from copy import deepcopy
+import datetime
 import logging
+import os
 import re
 
 
@@ -26,7 +28,8 @@ def with_logger(cls):
 class Util(Singleton):
     def __init__(self):
         self.__config = ConfigParser()
-        self.__config.read('config.ini')
+        path = 'config.ini' if os.path.exists('config.ini') else '../config.ini'
+        self.__config.read(path)
         # 城市转地区（地区有：所有省会、所有直辖市、全国、重点关注城市），特殊城市转换成所在省
         self.__city_to_region = {}
         # 重点关注城市
@@ -141,3 +144,20 @@ class Util(Singleton):
             new_sub_string = ' '
         re_old_sub_strings = r'[{}]+'.format(''.join(old_sub_strings))
         return re.sub(re_old_sub_strings, new_sub_string, string)
+
+    @staticmethod
+    def get_multi_col_0(df):
+        '''
+        获取二级列索引的 DataFrame 的第 0 级索引
+        :param df:
+        :return:
+        '''
+        return df.columns.levels[0][df.columns.codes[0][::df.columns.levels[1].size]]
+
+    @staticmethod
+    def str_dates_to_dates(str_dates):
+        res = []
+        for s in str_dates:
+            y, m, d = s.split('-')
+            res.append(datetime.date(int(y), int(m), int(d)))
+        return res

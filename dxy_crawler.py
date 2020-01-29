@@ -19,10 +19,12 @@ class DxyCrawler:
     __h5_key = 'dxy_data'
     # 疫情地图
     __data_url = 'https://3g.dxy.cn/newh5/view/pneumonia?sf=1&dn=2&from=singlemessage'
-    # 实时播报
-    __news_url = 'https://3g.dxy.cn/newh5/view/pneumonia/timeline'
+    # 实时播报，现已失效
+    # __news_url = 'https://3g.dxy.cn/newh5/view/pneumonia/timeline'
     # 保存的文件前缀
     __file_name_perfix = 'dxy_data'
+    __dxy_key_to_key = {'confirmedCount': '确诊', 'suspectedCount': '疑似', 'deadCount': '死亡', 'curedCount': '治愈'}
+    __key_to_dxy_key = {val: key for key, val in __dxy_key_to_key.items()}
 
     def __init__(self, run_mode='live'):
         '''
@@ -45,9 +47,18 @@ class DxyCrawler:
             self.logger.warning('没有读取到历史数据')
             self.__recent_df = None
             self.__recent_update_date_time = '无历史数据'
+        if self.__recent_df is None or '全国' not in self.__recent_df:
+            self.__total_recent = {'确诊': 0, '疑似': 0, '死亡': 0, '治愈': 0}
+        else:
+            s_recent_total = self.__recent_df['全国'].iloc[-1]
+            self.__total_recent = {  # self.__recent_df 中累计出的全国
+                '确诊': s_recent_total['确诊'], '疑似': s_recent_total['疑似'],
+                '死亡': s_recent_total['死亡'], '治愈': s_recent_total['治愈'],
+            }
+        self.__total_recent_in_html = {}  # 在网页中的全国统计数据，因为疑似病例，只有全国有统计，各地很少有统计
         self.__recent_daily_df = None
         self.__recent_daily_inc_df = None
-        self.__sorted_provinces = None
+        self.__sorted_provinces = []
         self.logger.info('初始化完成，最近一次统计时间：{}，额外统计的城市：{}'
                          .format(self.__recent_update_date_time, '、'.join(self.__key_cities)))
 
@@ -203,6 +214,7 @@ class DxyCrawler:
                     lines = file.readlines()
                     html_text = '\n'.join(lines)
                 else:
+                    file_path = None
                     res = requests.get(self.__data_url)
                     if res.status_code != 200:
                         self.logger.error('http status code: {}, {} 秒后重试'
@@ -213,25 +225,59 @@ class DxyCrawler:
                 tree = etree.HTML(html_text)
                 # print(html_text)
                 # print(etree.tostring(tree, encoding="utf-8", pretty_print=True).decode("utf-8"))
+                nodes = tree.xpath('//script[@id="getStatisticsService"]')
+                succeed = False
+                if len(nodes) == 0:
+                    self.logger.warning('全国数据没有，网页可能有变化，需要排查和解决')
+                else:
+                    self.__total_recent_in_html = {}
+                    try:
+                        total_texts = nodes[0].text.replace(' ', '').replace('"', '').split(',')
+                        for total_text in total_texts:
+                            if ':' in total_text:
+                                total_text = total_text.split(':')
+                                if len(total_text) == 2:
+                                    dxy_key, value = total_text
+                                    key = self.__dxy_key_to_key.get(dxy_key)
+                                    if key is not None:
+                                        self.__total_recent_in_html[key] = int(value)
+                        succeed = True
+                    except Exception as e:
+                        self.logger.warning('全国数据解析错误，网页可能有变化，需要排查和解决')
+                if not succeed or len(self.__total_recent_in_html) == 0:
+                    self.__total_recent_in_html = {'确诊': np.nan, '疑似': np.nan, '死亡': np.nan, '治愈': np.nan}
                 nodes = tree.xpath('//script[@id="getAreaStat"]')
                 if len(nodes) != 1:
                     self.logger.error('nodes 数量不为 1，为：{}, {} 秒后重试'
                                       .format(len(nodes), self.__retry_sleep_seconds))
                     continue
                 update_date_time = tree.xpath('//p[@class="mapTitle___2QtRg"]/span/text()')
-                if self.__run_mode == 'init' and len(update_date_time) == 0:  # 老版本的 html
-                    update_date_time = tree.xpath('//p[@class="mapTitle___2QtRg"]')[0].text
-                    _, update_date, update_time, _ = update_date_time.split(' ')
-                    update_date_time = '{} {}'.format(update_date, update_time)
+                if self.__run_mode == 'init' and len(update_date_time) == 0:
+                    # 最老版本的 html 和当前版本的 html
+                    try:
+                        update_date_time = tree.xpath('//p[@class="mapTitle___2QtRg"]')[0].text
+                        _, update_date, update_time, _ = update_date_time.split(' ')
+                        update_date_time = '{} {}'.format(update_date, update_time)
+                    except:
+                        # 最老版本的 html 和当前版本的 html
+                        update_date_time = file_path.split('dxy_data_')[-1].split('.')[0]
+                        update_date, update_time = update_date_time.split(' ')
                 else:
                     if len(update_date_time) != 1:
-                        self.logger.error('update_date_time 数量不为 1，为：{}, {} 秒后重试'
-                                          .format(len(nodes), self.__retry_sleep_seconds))
-                        continue
-                    update_date_time = update_date_time[0].split('截至 ')[1].split('（北京时间）')[0].split(' ')[:2]
-                    update_date = update_date_time[0]
-                    update_time = update_date_time[1]
-                    update_date_time = ' '.join(update_date_time)
+                        update_date_time = tree.xpath('//body/div/div/div/div/div/div/span/text()')
+                    if len(update_date_time) != 1:
+                        now = datetime.datetime.now()
+                        update_date_time = [str(now).split('.')[0][:-3]]
+                    update_date_time = update_date_time[0]
+                    if len(update_date_time) > 16:
+                        str_endswith = ' 全国数据统计' if ' 全国数据统计' in update_date_time else '（北京时间）'  # 旧版本是'（北京时间）'
+                        update_date_time = update_date_time.split('截至 ')[1].split(str_endswith)[0].split(' ')[:2]
+
+                        update_date = update_date_time[0]
+                        update_time = update_date_time[1]
+                        update_date_time = ' '.join(update_date_time)
+                    else:
+                        update_date, update_time = update_date_time.split(' ')
                 if self.__recent_update_date_time == update_date_time:
                     self.logger.info('和最近一次更新时间 {} 相同，等待 {} 秒后重试'
                                      .format(self.__recent_update_date_time, self.__retry_sleep_seconds))
@@ -249,23 +295,19 @@ class DxyCrawler:
                             city = city_info['cityName']
                             if city in self.__key_cities:
                                 data[city] = OrderedDict()
-                                data[city]['确诊'] = city_info['confirmedCount']
-                                data[city]['疑似'] = city_info['suspectedCount']
-                                data[city]['死亡'] = city_info['deadCount']
-                                data[city]['治愈'] = city_info['curedCount']
+                                for k in ['确诊', '疑似', '死亡', '治愈']:
+                                    data[city][k] = city_info[self.__key_to_dxy_key[k]]
                                 data[city]['是否更新'] = False
                                 self.__sorted_provinces.append(city)
                     self.__sorted_provinces.append(province)
                     data[province] = OrderedDict()
-                    data[province]['确诊'] = info['confirmedCount']
-                    data[province]['疑似'] = info['suspectedCount']
-                    data[province]['死亡'] = info['deadCount']
-                    data[province]['治愈'] = info['curedCount']
+                    for k in ['确诊', '疑似', '死亡', '治愈']:
+                        data[province][k] = info[self.__key_to_dxy_key[k]]
                     data[province]['是否更新'] = False
                     try:
                         for comment in info['comment'].split('，'):
                             for key in ['死亡', '治愈']:
-                                if key in comment:
+                                if key in comment and '待明确地区：' not in comment:
                                     for word in comment.split(' '):
                                         cnt = None
                                         try:
@@ -300,9 +342,29 @@ class DxyCrawler:
                             else:
                                 if key == '是否更新':
                                     total_data[key] |= df[province][key].values
+                                elif key == '疑似':
+                                    if '全国' in self.__recent_df:
+                                        l = self.__recent_df['全国']['疑似'].tolist()
+                                        l.append(0)
+                                        total_data[key] = l
+                                    else:
+                                        total_data[key] = np.zeros(shape=(self.__recent_df.shape[0] + 1, ),
+                                                                   dtype=np.int32)
                                 else:
                                     total_data[key] += df[province][key].values
+                val_in_html = self.__total_recent_in_html['疑似']
+                if isinstance(val_in_html, int):
+                    total_data['疑似'][-1] = val_in_html
                 total_df = pd.DataFrame(total_data, index=df.index)
+                total_s = total_df.iloc[-1]
+                if total_s['确诊'] == self.__total_recent['确诊'] and total_s['疑似'] == self.__total_recent['疑似'] and \
+                        total_s['死亡'] == self.__total_recent['死亡'] and total_s['治愈'] == self.__total_recent['治愈']:
+                    if self.__run_mode == 'live':
+                        self.logger.info('数据无更新，{} 秒后重试'.format(self.__retry_sleep_seconds))
+                    continue
+                else:
+                    for key in ['确诊', '疑似', '死亡', '治愈']:
+                        self.__total_recent[key] = total_s[key]
                 total_df.columns = pd.MultiIndex.from_product([['全国'], total_df.columns.values])
                 df = pd.concat([total_df, df], axis=1)
                 # 设置是否更新字段
@@ -319,10 +381,11 @@ class DxyCrawler:
                 if self.__run_mode == 'live':
                     self.__save_recent_files(html_text)
                 self.logger.info('数据已更新，更新日期时间：{}'.format(update_date_time))
-            except Exception as e:
+            except KeyError as e:
                 self.logger.error('未知异常：{}，{} 秒后重试'.format(e, self.__retry_sleep_seconds))
-        self.__save_recent_files()
-        self.logger.info('历史数据构造完成')
+        if self.__run_mode == 'init':
+            self.__save_recent_files()
+            self.logger.info('历史数据构造完成')
 
 
 if __name__ == '__main__':

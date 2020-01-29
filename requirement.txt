@@ -1,0 +1,9 @@
+basemap  # mac 上先安装 geos：brew install geos，然后下载并安装：https://github.com/matplotlib/basemap/
+geopy
+jupyter
+jupyterlab
+lxml
+numpy
+pandas
+requests
+scikit-learn
