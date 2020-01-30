@@ -150,7 +150,7 @@ class DxyCrawler:
 
     def __calc_daily(self):
         '''
-        将数据转换成日频和日频增量数据，如果当天有更新，每列取当天第一条更新的数据
+        将数据转换成日频和日频增量数据，如果当天有更新，每列取当天第一条更新的数据；并且因统计的是前一天的情况，将日期调整成前一天
         :return:
         '''
         first_date = self.__recent_df.index.levels[0][0]
@@ -185,6 +185,12 @@ class DxyCrawler:
         df.fillna(0, inplace=True)
         df = df.loc['2020-01-11':]  # 2020-01-11 之前的数据有大量缺失和不准，去掉
         sorted_provinces = ['全国'] + self.__sorted_provinces
+        new_index = []
+        for idx in df.index:
+            y, m, d = idx.split('-')
+            dt = datetime.date(int(y), int(m), int(d)) - datetime.timedelta(days=1)
+            new_index.append(str(dt))
+        df.index = new_index
         self.__recent_daily_df = df[sorted_provinces]
         arr = self.__recent_daily_df.values
         arr = arr[1:] - arr[:-1]
@@ -338,11 +344,13 @@ class DxyCrawler:
                     for province in self.__sorted_provinces:
                         if province not in self.__key_cities:
                             if key not in total_data:
-                                total_data[key] = df[province][key].values
-                            else:
+                                arr = df[province][key].values
                                 if key == '是否更新':
-                                    total_data[key] |= df[province][key].values
-                                elif key == '疑似':
+                                    total_data[key] = np.zeros(shape=arr.shape, dtype=np.int32)
+                                else:
+                                    total_data[key] = arr
+                            else:
+                                if key == '疑似':
                                     if '全国' in self.__recent_df:
                                         l = self.__recent_df['全国']['疑似'].tolist()
                                         l.append(0)
@@ -350,7 +358,7 @@ class DxyCrawler:
                                     else:
                                         total_data[key] = np.zeros(shape=(self.__recent_df.shape[0] + 1, ),
                                                                    dtype=np.int32)
-                                else:
+                                elif key != '是否更新':
                                     total_data[key] += df[province][key].values
                 val_in_html = self.__total_recent_in_html['疑似']
                 if isinstance(val_in_html, int):
@@ -371,17 +379,18 @@ class DxyCrawler:
                 index_1 = df.index[-1]
                 index_2 = df.index[-2]
                 for region in df.columns.levels[0]:
-                    for col in ['确诊']:
-                        if df.loc[index_1, (region, col)] != df.loc[index_2, (region, col)]:
-                            df.loc[index_1, (region, '是否更新')] = 1
-                            break
+                    if region != '全国':
+                        for col in ['确诊']:
+                            if df.loc[index_1, (region, col)] != df.loc[index_2, (region, col)]:
+                                df.loc[index_1, (region, '是否更新')] = 1
+                                break
                 self.__recent_df = df
                 self.__recent_update_date_time = update_date_time
                 # 保存数据
                 if self.__run_mode == 'live':
                     self.__save_recent_files(html_text)
                 self.logger.info('数据已更新，更新日期时间：{}'.format(update_date_time))
-            except KeyError as e:
+            except Exception as e:
                 self.logger.error('未知异常：{}，{} 秒后重试'.format(e, self.__retry_sleep_seconds))
         if self.__run_mode == 'init':
             self.__save_recent_files()

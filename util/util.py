@@ -161,3 +161,9 @@ class Util(Singleton):
             y, m, d = s.split('-')
             res.append(datetime.date(int(y), int(m), int(d)))
         return res
+
+    @staticmethod
+    def plot_chinese(plt):
+        # 解决中文显示问题
+        plt.rcParams['font.sans-serif'] = ['KaiTi']  # 指定默认字体
+        plt.rcParams['axes.unicode_minus'] = False  # 解决保存图像是负号'-'显示为方块的问题

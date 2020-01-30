@@ -253,7 +253,9 @@ class WeatherCrawler:
                 down_cnt = 7 - end_shift  # 平均潜伏期后的 down_cnt 天的权重线性递减
                 for i, down_val in zip(np.arange(1, down_cnt + 1), np.arange(1, down_cnt + 1)[::-1]):
                     weights[-i] -= down_val * 2
-                # print('{} 天气数据的加权平均权重：{}'.format(region, weights))
+                # up_cnt = df_region.shape[0] - down_cnt  # 线性递增天数
+                # print('线性递增天数：{}，线性递减天数：{}，{} 天气数据的加权平均权重：{}'
+                #       .format(up_cnt, down_cnt, region, weights))
                 s[weight_col] = np.average(df_region[col].values, weights=weights)
             s.name = region
             ss.append(s)
