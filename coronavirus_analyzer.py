@@ -28,6 +28,14 @@ class CoronavirusAnalyzer:
         self.__weather_crawler = WeatherCrawler()
         self.__last_date = last_date
 
+        df = self.df_virus_daily_inc_injured
+        no_inc_injured_regions = df.columns[df.iloc[-1] == 0]
+        df = self.df_virus_daily_inc
+        no_inc_regions = Util.get_multi_col_0(df)[(df.iloc[-1].values.reshape(-1, 4) != 0).sum(axis=1) == 0]
+        self.logger.warning('在最后一天（{}），如下这些地区没有新增的确诊人数：{}，如下这些地区没有任何疫情数据变化：{}。'
+                            '请确保这些地区已经公布了最后一天的数据（一般是后面一天上午公布），否则分析出来的结果可能不准确。'
+                            .format(last_date, '、'.join(no_inc_injured_regions), '、'.join(no_inc_regions)))
+
     @property
     def plt(self):
         '''
@@ -117,7 +125,7 @@ class CoronavirusAnalyzer:
         return pd.read_csv('data/全国各地之间距离.csv', index_col=0)
 
     @property
-    def df_info(self):
+    def df_region(self):
         '''
         各地信息数据
         :return:
@@ -172,9 +180,9 @@ class CoronavirusAnalyzer:
         return pd.DataFrame(arr, index=df.index[window_size - 1:], columns=df.columns)
 
     @staticmethod
-    def k_means(df, n_clusters=8, init='k-means++', n_init=10, max_iter=300, tol=1e-4, precompute_distances='auto',
-                verbose=0, random_state=None, copy_x=True, n_jobs=1, algorithm='auto', try_times=1,
-                insure_sorted=False, order=None):
+    def k_means(df, n_clusters=8, init='k-means++', n_init=10, max_iter=300, tol=1e-4,
+                precompute_distances='auto', verbose=0, random_state=None, copy_x=True,
+                n_jobs=1, algorithm='auto', try_times=1, insure_sorted=False, order=None):
         '''
         :param df: 一级列索引的 DataFrame
         :param df:
@@ -198,7 +206,9 @@ class CoronavirusAnalyzer:
         for _ in range(try_times):
             label_to_cols = None
             while True:
-                clf = KMeans(n_clusters=n_clusters, max_iter=n_clusters, n_jobs=n_jobs)
+                clf = KMeans(n_clusters=n_clusters, init=init, n_init=n_init, max_iter=max_iter, tol=tol,
+                             precompute_distances=precompute_distances, verbose=verbose,
+                             random_state=random_state, copy_x=copy_x, n_jobs=n_jobs, algorithm=algorithm)
                 clf.fit(df.values.T)
                 need_continue = False
                 label_to_cols = OrderedDict()
@@ -268,8 +278,7 @@ class CoronavirusAnalyzer:
                 k += 1
         plt.show()
 
-    @staticmethod
-    def plot_region_map(region_cluster_ids, title):
+    def plot_region_map(self, region_cluster_ids, title):
         '''
         画中国各地区疫情图
         :param Series region_cluster_ids: index 为各地名、values 为各地所在簇 id
@@ -284,16 +293,14 @@ class CoronavirusAnalyzer:
         except ImportError:
             raise ImportError('需要安装 basemap，并在 jupyter 中使用该函数')
 
-        analyzer = CoronavirusAnalyzer()
-        plt = analyzer.plt
-        plt.figure(figsize=(10, 10))
+        self.plt.figure(figsize=(10, 10))
         map = Basemap(llcrnrlon=77, llcrnrlat=14, urcrnrlon=140, urcrnrlat=51,
                       projection='lcc', lat_1=33, lat_2=45, lon_0=100)
         map.readshapefile('data/basemap/china/gadm36_CHN_shp/gadm36_CHN_1', 'states', drawbounds=True)
         map.readshapefile('data/basemap/china/gadm36_TWN_shp/gadm36_TWN_1', 'taiwan', drawbounds=True)
         statenames = []
         colors = {}
-        cmap = plt.cm.YlOrRd
+        cmap = self.plt.cm.YlOrRd
         cluster_cnt = np.unique(region_cluster_ids.values).size
         for shapedict in map.states_info:
             statename = shapedict['NL_NAME_1']
@@ -313,7 +320,7 @@ class CoronavirusAnalyzer:
                 colors[s] = __get_color(c_id, cluster_cnt)
         tw_c_id = region_cluster_ids['台湾']
         tw_color = __get_color(tw_c_id, cluster_cnt)
-        ax = plt.gca()
+        ax = self.plt.gca()
         for idx, seg in enumerate(map.states):
             color = rgb2hex(colors[statenames[idx]])
             poly = Polygon(seg, facecolor=color, edgecolor=color)
@@ -322,5 +329,5 @@ class CoronavirusAnalyzer:
             color = rgb2hex(tw_color)
             poly = Polygon(seg, facecolor=color, edgecolor=color)
             ax.add_patch(poly)
-        plt.title(title, fontsize=24)
-        plt.show()
+        self.plt.title(title, fontsize=24)
+        self.plt.show()
