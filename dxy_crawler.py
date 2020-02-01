@@ -36,8 +36,10 @@ class DxyCrawler:
         self.__run_mode = run_mode
         try:
             if self.__run_mode == 'live':
+                # 实时爬取并保存数据
                 path = self.get_dxy_file_path('recent')
             elif self.__run_mode == 'init':
+                # 从历史 html 构造各地区的历史数据
                 path = self.get_file_path('init_data')
             else:
                 raise ValueError('run_mode')
@@ -59,6 +61,8 @@ class DxyCrawler:
         self.__recent_daily_df = None
         self.__recent_daily_inc_df = None
         self.__sorted_provinces = []
+        if self.__recent_df is None:
+            self.__recent_df = pd.DataFrame([])
         self.logger.info('初始化完成，最近一次统计时间：{}，额外统计的城市：{}'
                          .format(self.__recent_update_date_time, '、'.join(self.__key_cities)))
 
@@ -376,14 +380,15 @@ class DxyCrawler:
                 total_df.columns = pd.MultiIndex.from_product([['全国'], total_df.columns.values])
                 df = pd.concat([total_df, df], axis=1)
                 # 设置是否更新字段
-                index_1 = df.index[-1]
-                index_2 = df.index[-2]
-                for region in df.columns.levels[0]:
-                    if region != '全国':
-                        for col in ['确诊']:
-                            if df.loc[index_1, (region, col)] != df.loc[index_2, (region, col)]:
-                                df.loc[index_1, (region, '是否更新')] = 1
-                                break
+                if df.shape[0] >= 2:
+                    index_1 = df.index[-1]
+                    index_2 = df.index[-2]
+                    for region in df.columns.levels[0]:
+                        if region != '全国':
+                            for col in ['确诊']:
+                                if df.loc[index_1, (region, col)] != df.loc[index_2, (region, col)]:
+                                    df.loc[index_1, (region, '是否更新')] = 1
+                                    break
                 self.__recent_df = df
                 self.__recent_update_date_time = update_date_time
                 # 保存数据
