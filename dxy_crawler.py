@@ -300,6 +300,8 @@ class DxyCrawler:
                 self.__sorted_provinces = []
                 for info in infos:
                     province = info['provinceShortName']
+                    if province == '待明确地区':
+                        continue
                     if province == '湖北':
                         for city_info in info['cities']:
                             city = city_info['cityName']
@@ -385,10 +387,18 @@ class DxyCrawler:
                     index_2 = df.index[-2]
                     for region in df.columns.levels[0]:
                         if region != '全国':
-                            for col in ['确诊']:
-                                if df.loc[index_1, (region, col)] != df.loc[index_2, (region, col)]:
-                                    df.loc[index_1, (region, '是否更新')] = 1
-                                    break
+                            for col in ['确诊', '治愈', '死亡']:
+                                if df.loc[index_1, (region, col)] == 0 and df.loc[index_2, (region, col)] != 0:
+                                    # 有个别数据错误，为 0，取前一次数据
+                                    val_1 = df.loc[index_1, (region, col)]
+                                    val_2 = df.loc[index_2, (region, col)]
+                                    df.loc[index_1, (region, col)] = val_2
+                                    self.logger.warning('{} {} 本次数据：{}，可能有问题，改为前一次数据：{}'
+                                                        .format(region, col, val_1, val_2))
+                                if col == '确诊':
+                                    if df.loc[index_1, (region, col)] > df.loc[index_2, (region, col)]:
+                                        df.loc[index_1, (region, '是否更新')] = 1
+                                        break
                 self.__recent_df = df
                 self.__recent_update_date_time = update_date_time
                 # 保存数据

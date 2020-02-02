@@ -1,17 +1,15 @@
 from collections import OrderedDict
 from dxy_crawler import DxyCrawler
+from huiyan_crawler import HuiyanCrawler
 from matplotlib.colors import rgb2hex
 from matplotlib.patches import Polygon
 from sklearn.cluster import KMeans
 from util.util import Util, with_logger
 from weather_crawler import WeatherCrawler
-import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+import datetime
 import math
-
-
-Util.plot_chinese(plt)
 
 
 @with_logger
@@ -25,9 +23,12 @@ class CoronavirusAnalyzer:
                               格式是 yyyy-mm-dd
         :return:
         '''
+        self.__util = Util()
+        self.__huiyan_crawler = HuiyanCrawler()
         self.__weather_crawler = WeatherCrawler()
+        if last_date is None:
+            last_date = str(datetime.date.today() - datetime.timedelta(days=1))
         self.__last_date = last_date
-
         df = self.df_virus_daily_inc_injured
         no_inc_injured_regions = df.columns[df.iloc[-1] == 0]
         df = self.df_virus_daily_inc
@@ -42,7 +43,7 @@ class CoronavirusAnalyzer:
         支持中文的 plt
         :return:
         '''
-        return plt
+        return self.__util.plt
 
     @property
     def df_virus(self):
@@ -106,15 +107,35 @@ class CoronavirusAnalyzer:
         '''
         return self.get_injured(self.df_virus_daily_inc)
 
+    @property
+    def df_virus_daily_inc_injured_cum_7(self):
+        '''
+        近 7 天累计新增确诊人数（当天和最近 6 天新增确诊人数和）
+        :return:
+        '''
+        df_virus_daily_inc_injured = self.df_virus_daily_inc_injured
+        arr = df_virus_daily_inc_injured.values
+        arr_cum_7 = np.zeros(shape=arr.shape, dtype=np.int32)
+        for end_i in range(arr.shape[0]):
+            start_i = 0 if end_i < 7 else end_i - 7
+            arr_cum_7[end_i, :] = arr[start_i: end_i, :].sum(axis=0)
+        return pd.DataFrame(
+            arr_cum_7, index=df_virus_daily_inc_injured.index, columns=df_virus_daily_inc_injured.columns)
+
     @staticmethod
     def get_injured(df):
         '''
-        获取确诊人数列，2 级列索引变成 1 级列索引
+        获取确诊人数，2 级列索引变成 1 级列索引
         :param df:
         :return:
         '''
-        regions = df.columns.levels[0][df.columns.codes[0][::4]]
-        return pd.DataFrame(df.values[:, 3::4], index=df.index, columns=regions)
+        col_1_size = df.columns.levels[1].size
+        try:
+            regions = df.columns.levels[0][df.columns.codes[0][::col_1_size]]
+        except AttributeError:
+            regions = df.columns.levels[0][df.columns.labels[0][::col_1_size]]
+        idx = 3 if col_1_size == 4 else 4
+        return pd.DataFrame(df.values[:, idx::col_1_size], index=df.index, columns=regions)
 
     @property
     def df_distance(self):
@@ -160,6 +181,32 @@ class CoronavirusAnalyzer:
         :return:
         '''
         return self.__weather_crawler.get_weather_average_data(self.df_virus_daily, start_shift, end_shift)
+
+    @property
+    def df_move_in_injured(self):
+        '''
+        进入各地的感染人流规模估算
+        :return:
+        '''
+        df_cum_7 = self.df_virus_daily_inc_injured_cum_7
+        ss = []
+        for region in self.__util.huiyan_region_id:
+            df_rate = self.__huiyan_crawler.get_rate(region)
+            if df_rate.size > 0:
+                df_rate = self.__huiyan_crawler.get_rate(region)[['省', '规模']]
+                df_rate.index = pd.MultiIndex.from_arrays([df_rate.index, df_rate['省']])
+                del df_rate['省']
+                s_cum_7 = df_cum_7.stack(0)
+                s_cum_7.index.names = ['日期', '省']
+                df_rate = df_rate.loc['2020-01-11':]
+                s_rate = df_rate['规模']
+                df = pd.DataFrame({'风险规模': s_rate * s_cum_7})
+                df.fillna(0, inplace=True)
+                df = df.unstack(1)
+                s = df.sum(axis=1)
+                s.name = region
+                ss.append(s)
+        return pd.DataFrame(ss).T.sort_index(axis=1)
 
     @staticmethod
     def moving_avg(df, window_size=3):
@@ -245,8 +292,7 @@ class CoronavirusAnalyzer:
             res_cluster_centers = np.array([res_cluster_centers[_] for _ in order])
         return res_clf, res_col_in_cluster, res_cluster_centers
 
-    @staticmethod
-    def subplots(df, ncols=4):
+    def subplots(self, df, ncols=4):
         '''
         对 df 每列画一个折线图
         :param df: 1 级行、列索引的 DataFrame
@@ -262,7 +308,7 @@ class CoronavirusAnalyzer:
         assert not isinstance(df.columns, pd.MultiIndex)
         nrows = math.ceil(df.shape[1] / ncols)
         ncols = 4
-        fig, ax = plt.subplots(figsize=(ncols * 5, nrows * 3), nrows=nrows, ncols=ncols)
+        fig, ax = self.plt.subplots(figsize=(ncols * 5, nrows * 3), nrows=nrows, ncols=ncols)
         x_data = Util.str_dates_to_dates(df.index)
         k = 0
         if ax.ndim == 1:
@@ -276,7 +322,7 @@ class CoronavirusAnalyzer:
                 ax[i][j].plot(x_data, y_data)
                 ax[i][j].set_title(region)
                 k += 1
-        plt.show()
+        self.plt.show()
 
     def plot_region_map(self, region_cluster_ids, title):
         '''

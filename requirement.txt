@@ -7,3 +7,5 @@ numpy
 pandas
 requests
 scikit-learn
+pymoo
+sklearn-deap

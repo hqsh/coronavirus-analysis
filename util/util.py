@@ -1,9 +1,13 @@
 from configparser import ConfigParser
 from copy import deepcopy
+import matplotlib.pyplot as plt
 import datetime
+import json
 import logging
 import os
 import re
+import requests
+import time
 
 
 class Singleton(object):
@@ -25,14 +29,15 @@ def with_logger(cls):
     return cls
 
 
+@with_logger
 class Util(Singleton):
     def __init__(self):
         self.__config = ConfigParser()
         path = 'config.ini' if os.path.exists('config.ini') else '../config.ini'
         self.__config.read(path)
-        # 城市转地区（地区有：所有省会、所有直辖市、全国、重点关注城市），特殊城市转换成所在省
+        # 城市转地区（地区有：所有省会、所有直辖市、全国、重点关注城市），特殊城市转换成所在省，配置加载
         self.__city_to_region = {}
-        # 重点关注城市
+        # 重点关注城市，配置加载
         self.__key_cities = []
         key_cities_regions = self.get_config('basic', 'key_cities')
         if key_cities_regions is not None and key_cities_regions != '':
@@ -41,6 +46,13 @@ class Util(Singleton):
                 self.__city_to_region[city] = region
                 self.__key_cities.append(city)
         self.__init_region_info()
+        # 百度地图慧眼迁徙，配置加载
+        self.__huiyan_region_id = self.get_config_as_dict('huiyan', 'region_id')
+        self.__plt = self.plot_chinese(plt)
+
+    @property
+    def plt(self):
+        return self.__plt
 
     def __init_region_info(self):
         self.__region_info = {}  # key / value 形式的地区信息，value 也是个 dict
@@ -70,6 +82,21 @@ class Util(Singleton):
         '''
         return self.__config.get(section, option)
 
+    def get_config_as_dict(self, section, option):
+        '''
+        获取 dict 配置项
+        :param section:
+        :param option:
+        :return:
+        '''
+        str_config = self.get_config('huiyan', 'region_id')
+        res_dict = {}
+        if str_config is not None and str_config != '':
+            for key_val in str_config.split(','):
+                key, val = key_val.split(':')
+                res_dict[key] = val
+        return res_dict
+
     @property
     def key_cities(self):
         '''
@@ -88,6 +115,10 @@ class Util(Singleton):
         if copy:
             return deepcopy(self.__city_to_region)
         return self.__city_to_region
+
+    @property
+    def huiyan_region_id(self):
+        return deepcopy(self.__huiyan_region_id)
 
     def add_to_city_to_region(self, cities, regions):
         '''
@@ -152,7 +183,10 @@ class Util(Singleton):
         :param df:
         :return:
         '''
-        return df.columns.levels[0][df.columns.codes[0][::df.columns.levels[1].size]]
+        try:
+            return df.columns.levels[0][df.columns.codes[0][::df.columns.levels[1].size]]
+        except AttributeError:
+            return df.columns.levels[0][df.columns.labels[0][::df.columns.levels[1].size]]
 
     @staticmethod
     def str_dates_to_dates(str_dates):
@@ -163,7 +197,41 @@ class Util(Singleton):
         return res
 
     @staticmethod
+    def str_date_to_date(str_date):
+        y, m, d = str_date.split('-')
+        return datetime.date(int(y), int(m), int(d))
+
+    @staticmethod
     def plot_chinese(plt):
         # 解决中文显示问题
         plt.rcParams['font.sans-serif'] = ['KaiTi']  # 指定默认字体
         plt.rcParams['axes.unicode_minus'] = False  # 解决保存图像是负号'-'显示为方块的问题
+        return plt
+
+    def get_huiyan_region_id(self, region):
+        return self.__huiyan_region_id.get(region)
+
+    def region_is_province(self, region):
+        '''
+        region 是否是省或直辖市或特区
+        :param region:
+        :return:
+        '''
+        return region in self.__region_info['region-province_capital']
+
+    def http_request(self, url, err_msg, try_time=10):
+        res = e = None
+        for try_time in range(1, try_time + 1):
+            try:
+                res = requests.get(url)
+                if res.status_code == 200:
+                    res = json.loads(res.text)
+                else:
+                    res = None
+            except Exception as e:
+                time.sleep(try_time)
+                continue
+        if res is None:
+            self.logger.error(err_msg)
+            raise e
+        return res
