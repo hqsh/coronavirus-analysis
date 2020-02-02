@@ -1,6 +1,7 @@
 from configparser import ConfigParser
 from copy import deepcopy
 import matplotlib.pyplot as plt
+import pandas as pd
 import datetime
 import json
 import logging
@@ -235,3 +236,31 @@ class Util(Singleton):
             self.logger.error(err_msg)
             raise e
         return res
+
+    @staticmethod
+    def del_cols(df, cols=None, selected_cols_1=None, inplace=True):
+        '''
+        :param df:
+        :param cols: 删除的列索引
+        :param selected_cols_1: 保留的 1 级列索引（如果是多级列索引）
+        :param inplace:
+        :return:
+        '''
+        if cols is None:
+            cols = []
+        if isinstance(df.columns, pd.MultiIndex):
+            dfs = []
+            for col in df.columns.levels[0]:
+                if col not in cols:
+                    if selected_cols_1 is None:
+                        dfs.append(df[[col]])
+                    else:
+                        _df = df[col][selected_cols_1]
+                        _df.columns = pd.MultiIndex.from_product([[col], _df.columns])
+                        dfs.append(_df)
+            res_df = pd.concat(dfs, axis=1)
+        else:
+            res_df = df if inplace else df.copy()
+            for col in cols:
+                del res_df[col]
+        return res_df

@@ -51,7 +51,7 @@ class CoronavirusAnalyzer:
         实时病毒感染数据
         :return:
         '''
-        return DxyCrawler.load_dxy_data_frame('recent', 'h5')
+        return DxyCrawler.load_dxy_data_frame('recent', 'h5').astype(np.int32)
 
     @property
     def df_virus_injured(self):
@@ -59,7 +59,7 @@ class CoronavirusAnalyzer:
         实时病毒感染数据中的确诊人数
         :return:
         '''
-        return self.get_injured(self.df_virus)
+        return self.get_injured(self.df_virus).astype(np.int32)
 
     @property
     def df_virus_daily(self):
@@ -70,7 +70,7 @@ class CoronavirusAnalyzer:
         df = DxyCrawler.load_dxy_data_frame('recent_daily', 'h5')
         if self.__last_date is not None:
             df = df.loc[: self.__last_date]
-        return df
+        return df.astype(np.int32)
 
     @property
     def df_virus_daily_injured(self):
@@ -78,7 +78,7 @@ class CoronavirusAnalyzer:
         日频病毒感染数据中的确诊人数
         :return:
         '''
-        return self.get_injured(self.df_virus_daily)
+        return self.get_injured(self.df_virus_daily).astype(np.int32)
 
     @property
     def df_recent_daily_injured(self):
@@ -97,7 +97,7 @@ class CoronavirusAnalyzer:
         df = DxyCrawler.load_dxy_data_frame('recent_daily_inc', 'h5')
         if self.__last_date is not None:
             df = df.loc[: self.__last_date]
-        return df
+        return df.astype(np.int32)
 
     @property
     def df_virus_daily_inc_injured(self):
@@ -119,8 +119,8 @@ class CoronavirusAnalyzer:
         for end_i in range(arr.shape[0]):
             start_i = 0 if end_i < 7 else end_i - 7
             arr_cum_7[end_i, :] = arr[start_i: end_i, :].sum(axis=0)
-        return pd.DataFrame(
-            arr_cum_7, index=df_virus_daily_inc_injured.index, columns=df_virus_daily_inc_injured.columns)
+        return pd.DataFrame(arr_cum_7, index=df_virus_daily_inc_injured.index,
+                            columns=df_virus_daily_inc_injured.columns).astype(np.int32)
 
     @staticmethod
     def get_injured(df):
@@ -136,6 +136,25 @@ class CoronavirusAnalyzer:
             regions = df.columns.levels[0][df.columns.labels[0][::col_1_size]]
         idx = 3 if col_1_size == 4 else 4
         return pd.DataFrame(df.values[:, idx::col_1_size], index=df.index, columns=regions)
+
+    def del_city_regions(self, df, selected_cols_1=None, del_special_regions=False, inplace=True):
+        '''
+        删除 DataFrame 的普通城市，或特区列索引
+        :param df:
+        :param selected_cols_1: 保留的 1 级列索引（如果是多级列索引）
+        :param del_special_regions: 是否删除特区
+        :param inplace:
+        :return:
+        '''
+        cols = ['香港', '澳门', '台湾'] if del_special_regions else []
+        df_cols = df.columns.levels[0] if isinstance(df.columns, pd.MultiIndex) else df.columns
+        for region in df_cols:
+            if not self.__util.region_is_province(region):
+                cols.append(region)
+        return self.__util.del_cols(df, cols, selected_cols_1, inplace)
+
+    def del_city_special_regions(self, df, selected_cols_1=None, inplace=True):
+        return self.del_city_regions(df, selected_cols_1=selected_cols_1, del_special_regions=True, inplace=inplace)
 
     @property
     def df_distance(self):
@@ -163,6 +182,14 @@ class CoronavirusAnalyzer:
         if self.__last_date is not None:
             df = df.loc[: self.__last_date]
         return df
+
+    @property
+    def df_weather_ma(self):
+        '''
+        滑动窗口加权平均日频率天气
+        :return:
+        '''
+        return self.__weather_crawler.get_weather_ma_data()
 
     @property
     def df_weather_average(self):
