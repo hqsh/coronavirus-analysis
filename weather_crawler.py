@@ -276,7 +276,7 @@ class WeatherCrawler:
         shift -= 1
         df_weather = self.get_weather_df()
         df_weather = self.__util.del_cols(df_weather, None, [
-            '上午晴雨度', '下午晴雨度', '上午晴朗度', '下午晴朗度', '上午晴朗度', '下午晴朗度'])
+            '上午晴朗度', '下午晴朗度', '上午降雨量', '下午降雨量'])  # '上午晴雨度', '下午晴雨度',
         start_idx = df_weather.index.values.searchsorted('2020-01-11') - window - shift
         df = df_weather.iloc[start_idx:]
         arr = df.values

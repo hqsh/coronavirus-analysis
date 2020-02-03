@@ -198,4 +198,4 @@ class HuiyanCrawler:
 
 if __name__ == '__main__':
     crawler = HuiyanCrawler()
-    crawler.calc_rate_by_province()
+    crawler.run()

@@ -108,9 +108,33 @@ class CoronavirusAnalyzer:
         return self.get_injured(self.df_virus_daily_inc)
 
     @property
+    def df_virus_7_days_inc_injured(self):
+        '''
+        最近7天新增确诊人数（不含当天），2 级列索引
+        :return:
+        '''
+        df_daily = self.df_virus_daily_inc_injured
+        df_values = df_daily.values
+        values = np.zeros(shape=(df_daily.shape[0], df_daily.shape[1] * 7), dtype=np.int32)
+        for end_i in range(df_daily.shape[0]):
+            start_i = end_i - 7
+            if start_i < 0:
+                start_i = 0
+            arr = df_values[start_i: end_i]
+            need_add_row_cnt = 7 - arr.shape[0]
+            if need_add_row_cnt > 0:
+                add_arr = np.zeros(shape=(need_add_row_cnt, arr.shape[1]), dtype=np.int32)
+                arr = np.vstack([add_arr, arr])
+            arr = arr.T.reshape(-1)
+            values[end_i, :] = arr
+        df_7_days = pd.DataFrame(values, index=df_daily.index, columns=pd.MultiIndex.from_product(
+            [df_daily.columns, ['7天前', '6天前', '5天前', '4天前', '3天前', '2天前', '1天前']]))
+        return df_7_days
+
+    @property
     def df_virus_daily_inc_injured_cum_7(self):
         '''
-        近 7 天累计新增确诊人数（当天和最近 6 天新增确诊人数和）
+        近 7 天累计新增确诊人数（不含当天的最近 7 天新增确诊人数和，即 1天前、2天前、......、7天前的确诊人数和）
         :return:
         '''
         df_virus_daily_inc_injured = self.df_virus_daily_inc_injured
@@ -211,8 +235,12 @@ class CoronavirusAnalyzer:
 
     @property
     def df_move_in_injured(self):
+        return self.get_df_move_in_injured()
+
+    def get_df_move_in_injured(self, shift=1):
         '''
-        进入各地的感染人流规模估算
+        进入某一地区的感染人流规模估算 = sigma ( 进入某一地区的各地人数规模 * 各来源地不含当天近 7 天的感染人数总和 ）
+        :param shift: 偏移量，默认为 1，表示当天只能拿到前 shift 天的结算结果数据
         :return:
         '''
         df_cum_7 = self.df_virus_daily_inc_injured_cum_7
@@ -225,7 +253,7 @@ class CoronavirusAnalyzer:
                 del df_rate['省']
                 s_cum_7 = df_cum_7.stack(0)
                 s_cum_7.index.names = ['日期', '省']
-                df_rate = df_rate.loc['2020-01-11':]
+                df_rate = df_rate.loc['2020-01-10':]
                 s_rate = df_rate['规模']
                 df = pd.DataFrame({'风险规模': s_rate * s_cum_7})
                 df.fillna(0, inplace=True)
@@ -233,25 +261,41 @@ class CoronavirusAnalyzer:
                 s = df.sum(axis=1)
                 s.name = region
                 ss.append(s)
-        return pd.DataFrame(ss).T.sort_index(axis=1)
+        df = pd.DataFrame(ss).T.sort_index(axis=1)
+        df = df.loc[: self.__last_date]
+        if shift > 1:
+            df.values[shift:, :] = df.values[:-shift, :]
+            df.values[:shift, :] = 0
+        df = df.loc['2020-01-11':]
+        return df
 
     @staticmethod
-    def moving_avg(df, window_size=3):
+    def moving_avg(df, window=3, shift=0, keep_shape=False):
         '''
         滑动平均
         :param df:
-        :param window_size:
+        :param window:
+        :param shift:
+        :param keep_shape:
         :return:
         '''
         df_values = df.values
-        arr = np.zeros(shape=(df.shape[0] - window_size + 1, df.shape[1]), dtype=np.float64)
+        arr = np.zeros(shape=(df.shape[0] - window + 1, df.shape[1]), dtype=np.float64)
         for col_idx in range(df.shape[1]):
             col_value = df_values[:, col_idx]
             moving_avg_col = np.cumsum(col_value, dtype=float)
-            moving_avg_col[window_size:] = moving_avg_col[window_size:] - moving_avg_col[:-window_size]
-            moving_avg_col = moving_avg_col[window_size - 1:] / window_size
+            moving_avg_col[window:] = moving_avg_col[window:] - moving_avg_col[:-window]
+            moving_avg_col = moving_avg_col[window - 1:] / window
             arr[:, col_idx] = moving_avg_col
-        return pd.DataFrame(arr, index=df.index[window_size - 1:], columns=df.columns)
+        index = df.index[window - 1:]
+        if shift > 0:
+            arr[shift:, :] = arr[:-shift, :]
+            arr = arr[shift:]
+            index = index[shift:]
+        res_df = pd.DataFrame(arr, index=index, columns=df.columns)
+        if keep_shape:
+            res_df = res_df.reindex(df.index)
+        return res_df
 
     @staticmethod
     def k_means(df, n_clusters=8, init='k-means++', n_init=10, max_iter=300, tol=1e-4,
