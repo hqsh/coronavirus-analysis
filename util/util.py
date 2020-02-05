@@ -264,3 +264,18 @@ class Util(Singleton):
             for col in cols:
                 del res_df[col]
         return res_df
+
+    @staticmethod
+    def shift_date_index(df, shift):
+        if shift > 0:
+            index_name = df.index.name
+            index = df.index.tolist()[shift:]
+            index_last_date = index[-1]
+            y, m, d = index_last_date.split('-')
+            date = datetime.date(int(y), int(m), int(d))
+            for _ in range(shift):
+                date += datetime.timedelta(days=1)
+                index.append(str(date))
+            df.index = index
+            df.index.name = index_name
+        return df

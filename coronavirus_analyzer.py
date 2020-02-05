@@ -36,6 +36,32 @@ class CoronavirusAnalyzer:
         self.logger.warning('在最后一天（{}），如下这些地区没有新增的确诊人数：{}，如下这些地区没有任何疫情数据变化：{}。'
                             '请确保这些地区已经公布了最后一天的数据（一般是后面一天上午公布），否则分析出来的结果可能不准确。'
                             .format(last_date, '、'.join(no_inc_injured_regions), '、'.join(no_inc_regions)))
+        # 备份分析数据
+        if False and last_date == str(datetime.date.today()):
+            def save_df(dfs):
+                for name, df in dfs.items():
+                    df.to_csv('df_bak/{}-人流刷新后/{}.csv'.format(last_date, name))
+                    df.to_excel('df_bak/{}-人流刷新后/{}.xlsx'.format(last_date, name))
+                    df.to_hdf('df_bak/{}-人流刷新后/{}.h5'.format(last_date, name), 'df_bak')
+
+            dfs = {}
+            dfs['df_virus_daily_inc_injured'] = self.del_city_special_regions(self.df_virus_daily_inc_injured)
+            dfs['df_move_in_injured'] = self.del_city_regions(self.df_move_in_injured)
+            dfs['df_move_in_injured_2'] = self.del_city_regions(self.get_df_move_in_injured(2))
+            dfs['df_move_in_injured_3'] = self.del_city_regions(self.get_df_move_in_injured(3))
+            dfs['df_move_in_injured_4'] = self.del_city_regions(self.get_df_move_in_injured(4))
+            dfs['df_move_in_injured_5'] = self.del_city_regions(self.get_df_move_in_injured(5))
+            dfs['df_weather_ma'] = self.del_city_special_regions(self.df_weather_ma)
+            dfs['df_virus_7_days'] = self.del_city_special_regions(self.df_virus_7_days_inc_injured)
+            dfs['df_daily_inc_ma3'] = self.moving_avg(self.df_virus_daily_inc_injured, window=3,
+                                                      shift=1, keep_shape=True).fillna(0)
+            dfs['df_curve_in_out_rate'] = self.df_curve_in_out_rate
+            dfs['df_move_in_injured_inc_rate_1'] = self.get_df_move_in_injured_inc_rate(1)
+            dfs['df_move_in_injured_inc_rate_2'] = self.get_df_move_in_injured_inc_rate(2)
+            dfs['df_move_in_injured_inc_rate_3'] = self.get_df_move_in_injured_inc_rate(3)
+            dfs['df_move_in_injured_inc_rate_4'] = self.get_df_move_in_injured_inc_rate(4)
+            dfs['df_move_in_injured_inc_rate_5'] = self.get_df_move_in_injured_inc_rate(5)
+            save_df(dfs)
 
     @property
     def plt(self):
@@ -44,6 +70,29 @@ class CoronavirusAnalyzer:
         :return:
         '''
         return self.__util.plt
+
+    def append_dates(self, df):
+        '''
+        对函数返回的 DataFrame 检查是否最后一天，并且如果最后一天是当天，需要清空
+        :param df:
+        :return:
+        '''
+        if df.columns.size == 0:
+            return df
+        date = self.__util.str_date_to_date(df.index[-1])
+        append_index = []
+        date += datetime.timedelta(days=1)
+        while date <= self.__util.str_date_to_date(self.__last_date):
+            append_index.append(str(date))
+            date += datetime.timedelta(days=1)
+        if len(append_index) > 0:
+            index = df.index.tolist()
+            index += append_index
+            df = df.reindex(index)
+        else:
+            df.iloc[-1] = np.nan
+        df.fillna(method='pad', inplace=True)
+        return df
 
     @property
     def df_virus(self):
@@ -70,7 +119,8 @@ class CoronavirusAnalyzer:
         df = DxyCrawler.load_dxy_data_frame('recent_daily', 'h5')
         if self.__last_date is not None:
             df = df.loc[: self.__last_date]
-        return df.astype(np.int32)
+        df = df.astype(np.int32)
+        return self.append_dates(df)
 
     @property
     def df_virus_daily_injured(self):
@@ -105,7 +155,8 @@ class CoronavirusAnalyzer:
         日频新增病毒感染数据中的确诊人数
         :return:
         '''
-        return self.get_injured(self.df_virus_daily_inc)
+        df = self.get_injured(self.df_virus_daily_inc)
+        return self.append_dates(df)
 
     @property
     def df_virus_7_days_inc_injured(self):
@@ -159,7 +210,22 @@ class CoronavirusAnalyzer:
         except AttributeError:
             regions = df.columns.levels[0][df.columns.labels[0][::col_1_size]]
         idx = 3 if col_1_size == 4 else 4
-        return pd.DataFrame(df.values[:, idx::col_1_size], index=df.index, columns=regions)
+        df1 = pd.DataFrame(df.values[:, idx::col_1_size], index=df.index, columns=regions)
+
+        # 测试正确性，待测试完后删除
+        ss_injured = []
+        for region in df.columns.levels[0]:
+            s_injured = df[region]['确诊']
+            s_injured.name = region
+            ss_injured.append(s_injured)
+        df2 = pd.DataFrame(ss_injured).T[regions]
+        if ((df1 - df2).values != 0).sum() != 0 or ((df1.values - df2.values) != 0).sum() != 0:
+            df1.to_csv('df_bak/exception/get_injured_1.csv')
+            df1.to_excel('df_bak/exception/get_injured_1.xlsx')
+            df2.to_csv('df_bak/exception/get_injured_2.csv')
+            df2.to_excel('df_bak/exception/get_injured_2.xlsx')
+            raise ValueError('get_injured 切片有问题')
+        return df1
 
     def del_city_regions(self, df, selected_cols_1=None, del_special_regions=False, inplace=True):
         '''
@@ -234,6 +300,22 @@ class CoronavirusAnalyzer:
         return self.__weather_crawler.get_weather_average_data(self.df_virus_daily, start_shift, end_shift)
 
     @property
+    def df_curve_in(self):
+        return self.__huiyan_crawler.df_curve_in
+
+    @property
+    def df_curve_out(self):
+        return self.__huiyan_crawler.df_curve_out
+
+    def get_curve_in_out_rate(self, shift=0):
+        df = self.df_curve_in / self.df_curve_out
+        return self.__util.shift_date_index(df, 1)
+
+    @property
+    def df_curve_in_out_rate(self):
+        return self.get_curve_in_out_rate(1)
+
+    @property
     def df_move_in_injured(self):
         return self.get_df_move_in_injured()
 
@@ -248,12 +330,18 @@ class CoronavirusAnalyzer:
         for region in self.__util.huiyan_region_id:
             df_rate = self.__huiyan_crawler.get_rate(region)
             if df_rate.size > 0:
-                df_rate = self.__huiyan_crawler.get_rate(region)[['省', '规模']]
+                df_rate = df_rate[['省', '规模']]
+                # 湖北封城后认为从 2020-01-25 起的从湖北流入的人口，为安全的人口，可能去掉这些数据  # todo
                 df_rate.index = pd.MultiIndex.from_arrays([df_rate.index, df_rate['省']])
                 del df_rate['省']
                 s_cum_7 = df_cum_7.stack(0)
                 s_cum_7.index.names = ['日期', '省']
-                df_rate = df_rate.loc['2020-01-10':]
+                if shift > 0:
+                    # 偏移 df_rate
+                    df_rate = df_rate.unstack(1)
+                    df_rate = self.__util.shift_date_index(df_rate, shift)
+                    df_rate = df_rate.stack(1)
+                df_rate = df_rate.loc['2020-01-10': self.__last_date]
                 s_rate = df_rate['规模']
                 df = pd.DataFrame({'风险规模': s_rate * s_cum_7})
                 df.fillna(0, inplace=True)
@@ -268,6 +356,28 @@ class CoronavirusAnalyzer:
             df.values[:shift, :] = 0
         df = df.loc['2020-01-11':]
         return df
+
+    def get_df_move_in_injured_inc_rate(self, compare_shift=1, shift=1):
+        '''
+        获取进入地区人口风险系数的增长趋势，VAL[shift] / VAL[shift + compare_shift]
+        :param compare_shift:
+        :param shift:
+        :return:
+        '''
+        df_move_in = self.get_df_move_in_injured(shift=shift)
+        df_move_in_compare = self.get_df_move_in_injured(shift=shift+compare_shift)
+        return df_move_in / df_move_in_compare
+
+    @staticmethod
+    def get_df_day_idx(df):
+        '''
+        获取每列为 1、2、3、......、df.shape[0] 的，index、columns 和 df 一样的 DataFrame
+        :param df:
+        :return:
+        '''
+        arr = np.zeros(shape=df.shape, dtype=np.int32)
+        arr[:] = np.arange(1, arr.shape[0] + 1).reshape(arr.shape[0], 1)
+        return pd.DataFrame(arr, index=df.index.copy(), columns=df.columns.copy())
 
     @staticmethod
     def moving_avg(df, window=3, shift=0, keep_shape=False):
@@ -448,3 +558,4 @@ class CoronavirusAnalyzer:
             ax.add_patch(poly)
         self.plt.title(title, fontsize=24)
         self.plt.show()
+
