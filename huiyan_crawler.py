@@ -169,6 +169,8 @@ class HuiyanCrawler:
                     date = '{}-{}-{}'.format(date[:4], date[4: 6], date[6:])
                     dates.append(date)
                 df_curve.index = pd.Series(dates, name='日期')
+                df_curve = df_curve.sort_index(axis=0)
+                df_curve = df_curve.sort_index(axis=1)
                 path = self.get_path('curve', move_type)
                 df_curve.to_csv(path)
         self.logger.info('数据爬取完毕')
