@@ -262,11 +262,12 @@ class Util(Singleton):
         else:
             res_df = df if inplace else df.copy()
             for col in cols:
-                del res_df[col]
+                if col in res_df.columns:
+                    del res_df[col]
         return res_df
 
     @staticmethod
-    def shift_date_index(df, shift):
+    def shift_date_index(df, shift, inplace=True):
         if shift > 0:
             index_name = df.index.name
             index = df.index.tolist()[shift:]
@@ -276,6 +277,8 @@ class Util(Singleton):
             for _ in range(shift):
                 date += datetime.timedelta(days=1)
                 index.append(str(date))
+            if not inplace:
+                df = df.copy()
             df.index = index
             df.index.name = index_name
         return df
