@@ -1,4 +1,5 @@
 from util.util import Util, with_logger
+import numpy as np
 import pandas as pd
 import datetime
 
@@ -180,6 +181,7 @@ class HuiyanCrawler:
         对 rank 原始数据，按省、直辖市归类计算进出人流规模
         :return:
         '''
+        s_population = pd.read_csv('data/全国各地信息.csv', index_col=0)['人口'] / 1e8
         for move_type in ['in', 'out']:
             df_curve = self.__load_curve_df(move_type)
             for region in self.__util.huiyan_region_id:
@@ -189,6 +191,15 @@ class HuiyanCrawler:
                     del df['市']
                     df = df.groupby(['日期', '省']).sum()
                     df['规模'] = df['比例'] * s_curve
+                    arr_scope = df['规模'].values
+                    df_index_province = df.index.to_frame()['省'].values.astype('U')
+                    unique_provinces = np.unique(df_index_province)
+                    arr_scope_by_population = np.zeros(shape=(df.shape[0], ), dtype=np.float64)
+                    for province in unique_provinces:
+                        mask = df_index_province == province
+                        population = s_population[province]
+                        arr_scope_by_population[mask] = arr_scope[mask] / population
+                    df['规模/人口'] = arr_scope_by_population
                     path = self.get_path('rate', move_type, region)
                     df.to_csv(path)
         self.logger.info('按省、直辖市归类计算进出人流规模')
