@@ -19,26 +19,35 @@ class CoronavirusAnalyzer:
     '''
     冠状病毒分析
     '''
-    FIRST_DATE = '2020-01-11'  # 有效数据的第一天
 
-    def __init__(self, last_date=None):
+    def __init__(self, last_date=None, is_predict=False, first_date=None):
         '''
-        :param str last_date: 最后一天，对日频数据有效，用于模拟历史，会把最后一天数据用前一天数据填充，格式是 yyyy-mm-dd
+        :param str or datetime.date last_date: 最后一天，对日频数据有效，用于模拟历史，会把最后一天数据用前一天数据填充，格式是 yyyy-mm-dd
+        :param bool is_predict: 是否用于预测，如果是的话，在取数据时候会做 index 偏移 1 位的处理
+        :param str or datetime.date last_date: 最早一天
         :return:
         '''
+        self.__is_predict = is_predict
         self.__util = Util()
         self.__huiyan_crawler = HuiyanCrawler()
         self.__weather_crawler = WeatherCrawler()
         if last_date is None:
-            last_date = str(datetime.date.today())
-        self.__last_date = last_date
+            last_date = datetime.date.today()
+        self.__last_date = str(last_date)
+        if first_date is None:
+            self.__first_date = '2020-01-21' if is_predict else '2020-01-11'  # 有效数据的第一天
+        else:
+            self.__first_date = str(first_date)
+        self.__df_move_inc_corr = self.get_df_move_inc_corr()
+        self.__df_move_inc_corr_cp = self.get_df_move_inc_corr(True)
         df = self.df_virus_daily_inc_injured
         no_inc_injured_regions = df.columns[df.iloc[-1] == 0]
         df = self.df_virus_daily_inc
         no_inc_regions = Util.get_multi_col_0(df)[(df.iloc[-1].values.reshape(-1, 4) != 0).sum(axis=1) == 0]
-        self.logger.warning('在最后一天（{}），如下这些地区没有新增的确诊人数：{}，如下这些地区没有任何疫情数据变化：{}。'
-                            '请确保这些地区已经公布了最后一天的数据（一般是后面一天上午公布），否则分析出来的结果可能不准确。'
-                            .format(last_date, '、'.join(no_inc_injured_regions), '、'.join(no_inc_regions)))
+        if str(datetime.date.today()) == self.__last_date:
+            self.logger.warning('在最后一天（{}），如下这些地区没有新增的确诊人数：{}，如下这些地区没有任何疫情数据变化：{}。'
+                                '请确保这些地区已经公布了最后一天的数据（一般是后面一天上午公布），否则分析出来的结果可能不准确。'
+                                .format(last_date, '、'.join(no_inc_injured_regions), '、'.join(no_inc_regions)))
 
     @property
     def plt(self):
@@ -54,21 +63,22 @@ class CoronavirusAnalyzer:
         :param df:
         :return:
         '''
-        if df.columns.size == 0:
-            return df
-        date = self.__util.str_date_to_date(df.index[-1])
-        append_index = []
-        date += datetime.timedelta(days=1)
-        while date <= self.__util.str_date_to_date(self.__last_date):
-            append_index.append(str(date))
+        if self.__is_predict:
+            if df.columns.size == 0:
+                return df
+            date = self.__util.str_date_to_date(df.index[-1])
+            append_index = []
             date += datetime.timedelta(days=1)
-        if len(append_index) > 0:
-            index = df.index.tolist()
-            index += append_index
-            df = df.reindex(index)
-        else:
-            df.iloc[-1] = np.nan
-        df.fillna(method='pad', inplace=True)
+            while date <= self.__util.str_date_to_date(self.__last_date):
+                append_index.append(str(date))
+                date += datetime.timedelta(days=1)
+            if len(append_index) > 0:
+                index = df.index.tolist()
+                index += append_index
+                df = df.reindex(index)
+            else:
+                df.iloc[-1] = np.nan
+            df.fillna(method='pad', inplace=True)
         return df
 
     @property
@@ -95,7 +105,7 @@ class CoronavirusAnalyzer:
         '''
         df = DxyCrawler.load_dxy_data_frame('recent_daily', 'h5')
         if self.__last_date is not None:
-            df = df.loc[: self.__last_date]
+            df = df.loc[self.__first_date: self.__last_date]
         df = df.astype(np.int32)
         return self.append_dates(df)
 
@@ -123,7 +133,7 @@ class CoronavirusAnalyzer:
         '''
         df = DxyCrawler.load_dxy_data_frame('recent_daily_inc', 'h5')
         if self.__last_date is not None:
-            df = df.loc[: self.__last_date]
+            df = df.loc[self.__first_date: self.__last_date]
         return df.astype(np.int32)
 
     @property
@@ -292,7 +302,11 @@ class CoronavirusAnalyzer:
 
     def get_df_curve_in(self, shift=0):
         df_curve_in = self.__util.shift_date_index(self.df_curve_in, shift)
-        return df_curve_in.loc[self.FIRST_DATE:]
+        return df_curve_in.loc[self.__first_date:]
+
+    def get_df_curve_out(self, shift=0):
+        df_curve_out = self.__util.shift_date_index(self.df_curve_out, shift)
+        return df_curve_out.loc[self.__first_date:]
 
     @property
     def df_curve_out(self):
@@ -310,14 +324,37 @@ class CoronavirusAnalyzer:
     def df_move_in_injured(self):
         return self.get_df_move_in_injured()
 
-    def get_df_move_in_injured(self, shift=0, n=7, consider_population=False):
+    @property
+    def df_move_inc_corr(self):
+        return self.__df_move_inc_corr
+
+    @property
+    def df_move_inc_corr_cp(self):
+        return self.__df_move_inc_corr_cp
+
+    @staticmethod
+    def get_df_move_inc_corr(consider_population=False):
+        path = HuiyanCrawler.get_df_move_inc_corr_path(consider_population)
+        try:
+            return pd.read_hdf(path, 'huiyan')
+        except FileNotFoundError:
+            return pd.DataFrame([])
+
+    def get_df_move_in_injured(self, shift=0, n=8, consider_population=False):
         '''
         进入某一地区的感染人流规模估算 = sigma ( 进入某一地区的各地人数规模 * 各来源地不含当天近 n 天的感染人数总和 ）
-        :param shift: 偏移量，默认为 1，表示当天只能拿到前 shift 天的计算结果数据
-        :param n: 最近 n 天（不含当天）人流来源地的累计确诊人数
+        :param shift: 偏移量，默认为 0，表示当天只能拿到前 shift 天的计算结果数据
+        :param n: 最近 n 天（不含当天）人流来源地的累计确诊人数，默认取 n 为 8，因经测试，n 为 8 时候相关性最大，或 8 以后相关性增幅明显变小
         :param consider_population: 是否考虑人流来源地的人口数量
         :return:
         '''
+        path = 'cache/move_in_injured-{}-shift_{}-n_{}-cp_{}.csv'.format(
+            self.__last_date, shift, n, consider_population)
+        try:
+            df = pd.read_csv(path, index_col=0)
+            return df.loc[self.__first_date: self.__last_date]
+        except FileNotFoundError:
+            pass
         df_cum_n = self.get_df_virus_daily_inc_injured_cum_n(n)
         ss = []
         for region in self.__util.huiyan_region_id:
@@ -330,12 +367,6 @@ class CoronavirusAnalyzer:
                 del df_rate['省']
                 s_cum_n = df_cum_n.stack(0)
                 s_cum_n.index.names = ['日期', '省']
-                if shift > 0:
-                    # 偏移 df_rate
-                    df_rate = df_rate.unstack(1)
-                    df_rate = self.__util.shift_date_index(df_rate, shift)
-                    df_rate = df_rate.stack(1)
-                df_rate = df_rate.loc['2020-01-01': self.__last_date]
                 s_rate = df_rate[rate_col]
                 df = pd.DataFrame({'风险规模': s_rate * s_cum_n})
                 df.fillna(0, inplace=True)
@@ -344,8 +375,10 @@ class CoronavirusAnalyzer:
                 s.name = region
                 ss.append(s)
         df = pd.DataFrame(ss).T.sort_index(axis=1)
-        df = df.loc[self.FIRST_DATE: self.__last_date]
-        return df
+        df = self.__util.shift_date_index(df, shift)
+        df = df.loc[self.__first_date: self.__last_date]
+        df.to_csv(path)
+        return df.loc[self.__first_date: self.__last_date]
 
     def get_df_move_in_injured_inc_rate(self, compare_shift=1, shift=3):
         '''
@@ -357,6 +390,47 @@ class CoronavirusAnalyzer:
         df_move_in = self.get_df_move_in_injured(shift=shift)
         df_move_in_compare = self.get_df_move_in_injured(shift=shift+compare_shift)
         return df_move_in / df_move_in_compare
+
+    def get_move_in_injured_corr(self, n=8, shift=0, consider_population=False):
+        '''
+        获取进入地区人口风险系数和每日新增人数的相关性，返回相应的 Series
+        :param n: 最近 n 天（不含当天）人流来源地的累计确诊人数，默认取 n 为 8，因经测试，n 为 8 时候相关性最大，或 8 以后相关性增幅明显变小
+        :param shift:
+        :param consider_population: 是否考虑人口（各来源地的风险系数除以来源地的人口数）
+        :return:
+        '''
+        df_move_in_injured = self.get_df_move_in_injured(shift=shift, n=n, consider_population=consider_population)
+        df_inc_injured = self.df_virus_daily_inc_injured.sort_index(axis=1)
+        corr = {}
+        for region in df_move_in_injured.columns:
+            if region in df_move_in_injured and region in df_inc_injured:
+                index = set(df_move_in_injured.index.tolist()) & set(df_inc_injured.index.tolist())
+                if len(index) < df_move_in_injured.index.size or len(index) < df_inc_injured.index.size:
+                    index = sorted(list(index))
+                    df_move_in_injured = df_move_in_injured.loc[index]
+                    df_inc_injured = df_inc_injured.loc[index]
+                corr[region] = np.corrcoef(df_move_in_injured[region], df_inc_injured[region])[0, 1]
+        return pd.Series(corr)
+
+    def get_move_in_injured_corr_info(self, n=8, shift=0):
+        '''
+        获取进入地区人口风险系数和每日新增人数的相关性，并和累计人数一起组合成 DataFrame 返回
+        :param n: 最近 n 天（不含当天）人流来源地的累计确诊人数，默认取 n 为 8，因经测试，n 为 8 时候相关性最大，或 8 以后相关性增幅明显变小
+        :param shift:
+        :return:
+        '''
+        s_virus_injured = self.df_virus_injured.iloc[-1]
+        data = OrderedDict()
+        df_move_in_injured = self.get_df_move_in_injured(shift=shift, n=n)
+        df_inc_injured = self.df_virus_daily_inc_injured.sort_index(axis=1)
+        for region in df_move_in_injured.columns:
+            if region in df_move_in_injured and region in df_inc_injured:
+                corr_val = np.corrcoef(df_move_in_injured[region], df_inc_injured[region])[0, 1]
+                data[region] = [s_virus_injured[region], corr_val]
+        df = pd.DataFrame(data).T
+        df.columns = ['累计确诊', '每日新增确诊和近{}天内进入人口风险系数的相关性'.format(n)]
+        df['累计确诊'] = df['累计确诊'].astype(np.int32)
+        return df.sort_values(df.columns[1], ascending=False)
 
     @staticmethod
     def get_df_day_idx(index, columns):
@@ -495,6 +569,34 @@ class CoronavirusAnalyzer:
                 k += 1
         self.plt.show()
 
+    def plot_move_inc_corr(self, region, date=None, consider_population=False, n=None, shift=None, resize=True):
+        '''
+        画出进入人流风险系数和每日新增确诊人数的折线图，并输出相关系数
+        resize: 是否将风险系数调整为每日新增人数相同的纵坐标(最高风险系数调整为最高每日新增确诊人数的值)
+        '''
+        date = str(date)
+        if n is None or shift is None:
+            df_corr = self.__df_move_inc_corr_cp if consider_population else self.__df_move_inc_corr
+            if df_corr.size == 0:
+                raise ValueError('无数据，需要先构造进入人流风险系数和每日新增确诊人数的相关系数表')
+            if date is None or date > df_corr.index[-1]:
+                date = df_corr.index[-1]
+            s = df_corr.loc[date, region]
+            shift = int(s['shift'])
+            n = int(s['window'])
+        print('corr: {}'.format(self.get_move_in_injured_corr(
+            n=n, shift=shift, consider_population=consider_population)[region]))
+        s_daily_inc = self.df_virus_daily_inc_injured[region]
+        s_move_in = self.get_df_move_in_injured(shift, n)[region].loc['2020-01-11':]
+        if resize:
+            s_move_in = s_move_in / s_move_in.max() * s_daily_inc.max()
+        s_daily_inc.plot(color='red', label='每日新增确诊人数', figsize=(6, 3.6))
+        s_move_in.plot(color='blue', label='进入人流风险系数', figsize=(6, 3.6))
+        # s_daily_inc.plot(color='red', label='每日新增确诊人数', figsize=(10, 6))
+        # s_move_in.plot(color='blue', label='进入人流风险系数', figsize=(10, 6))
+        self.plt.title(region)
+        self.plt.legend(loc='upper left')
+
     def plot_region_map(self, region_cluster_ids, title):
         '''
         画中国各地区疫情图
@@ -587,20 +689,49 @@ class CoronavirusAnalyzer:
         columns = pd.MultiIndex.from_product([columns, cluster_names])
         return pd.DataFrame(values, index=index, columns=columns)
 
-    def get_data(self, n_days=7, n_move_days=7, cum_n_days=10000, use_move_in=False, use_move_in_injured=True,
-                 move_in_injured_consider_population=False, use_day_idx=True, use_in_out_rate=True,
-                 use_move_in_inc_rate=False, use_ma3=False, use_ma5=False, use_ma7=False,  use_last_ma3=True,
-                 use_last_ma3_rank=False, use_region_risk_level=False, use_region_cluster_one_hot=False,
-                 use_weather=False, sample_weight_type=1, omit_hubei=True, selected_regions=None):
+    def get_next_ma(self, df, n, slice_last_rows=False):
+        '''
+        将 df 的每行的值改为当前行和 n-1 个后续行的均值。
+        如果 slice_last_rows 为 True，则去掉最后 n - 1 行，否则先将最后缺失的 n - 1 行以原有的最后一行补上，然后取平均
+        '''
+        assert isinstance(n, int) and n > 0
+        if n == 1:
+            return df
+        values = df.values
+        if not slice_last_rows:
+            append_values = np.zeros(shape=(n-1, values.shape[1]), dtype=values.dtype)
+            append_values[:] = values[-1, :]
+            values = np.vstack([values, append_values])
+        row_cnt = df.shape[0] - n + 1 if slice_last_rows else df.shape[0]
+        arr = np.zeros(shape=(row_cnt, df.shape[1]), dtype=values.dtype)
+        for shift in range(n):
+            arr += values[shift: shift + row_cnt, :]
+        arr /= n
+        index = df.index
+        if slice_last_rows and n > 1:
+            index = index[: -(n-1)]
+        return pd.DataFrame(arr, index=index, columns=df.columns)
+
+    def get_data(self, predict_day_cnt=1, n_days=7, n_move_days=7, cum_n_days=10000, use_move_in_corr=False,
+                 use_move_in=False, use_move_in_injured=True, use_best_fit_move_in_injured=False,
+                 move_in_injured_consider_population=False, use_move_out=False, use_day_idx=True,
+                 use_in_out_rate=True, use_move_in_inc_rate=False, use_ma3=False, use_ma5=False,
+                 use_ma7=False, use_last_ma3=True, use_last_ma3_rank=False, use_region_risk_level=False,
+                 use_region_cluster_one_hot=False, use_weather=False, sample_weight_type=1,
+                 sample_weight_power=0.5, omit_hubei=True, selected_regions=None, train_omit_zero_y=False):
         '''
         获取训练和预测数据
+        predict_day_cnt             预测的天数，值代表预测后面连续的多天每日新增均值
         n_days                      使用不含当天的最近 n_days 天每日新增确诊人数
         n_move_days                 使用不含当天的最近 n_move_days 天的人流风险系数
         cum_n_days                  人流数据风险系数使用不含人流当天的 cum_n_days 天内的累计确诊人数，作为来源地区风险性评估，
                                     默认取足够大的数字，表示累计的所有天
-        use_move_in                 是否使用进入地区人流规模数据
+        use_move_in_corr            是否使用进入人流风险系数和地区每日新增相关性的数据
+        use_move_in                 是否使用进地区人流规模数据
         use_move_in_injured         是否使用人流风险系数数据
+        use_best_fit_move_in_injured    使用最佳 shift、window（n）组合的人流风险系数
         move_in_injured_consider_population    人流风险系数是否考虑来源地人口数量
+        use_move_out                是否使用出地区人流规模数据
         use_day_idx                 是否使用天数
         use_in_out_rate             各地 1天前的人流进出比例
         use_move_in_inc_rate        人流数据风险系数趋势
@@ -613,19 +744,33 @@ class CoronavirusAnalyzer:
         use_region_cluster_one_hot  是否使用地区风险级别的独热编码
         use_weather                 是否使用天气数据，函数中 use_data 是算法使用的数据
         sample_weight_type          0 不使用 sample_weight，1 使用最近 3 天新增均值，2 使用最近 3 天新增均值排名
+        sample_weight_power         sample_weight 使用乘方的次数
         omit_hubei                  是否忽略湖北
         selected_regions            只学习和预测某些地区，如果为 None，表示都学习和预测
+        train_omit_zero_y           训练集忽略预测值为 0 的
         '''
-        if use_move_in and use_move_in_injured:
+        if use_move_in and (use_move_in_injured or use_best_fit_move_in_injured):
+            use_move_in_injured = use_best_fit_move_in_injured = False
+            use_last_ma3 = use_last_ma3_rank = False
+        if use_best_fit_move_in_injured:
             use_move_in_injured = False
         if use_last_ma3 and use_last_ma3_rank:
             use_last_ma3 = False
         omitted_provinces = ['湖北'] if omit_hubei else []
         df_virus_daily_inc_injured = self.del_city_special_regions(self.df_virus_daily_inc_injured,
                                                                    omitted_provinces=omitted_provinces)
-        index = columns = None
+        df_virus_daily_inc_injured = self.get_next_ma(df_virus_daily_inc_injured, predict_day_cnt)
+        index = df_virus_daily_inc_injured.index.copy()
+        columns = df_virus_daily_inc_injured.columns.copy()
         dfs = []
         use_data = []  # 所有使用的数据 list
+        if use_move_in_corr:
+            s_corr = self.get_move_in_injured_corr()[columns]
+            df_corr = pd.DataFrame(np.zeros(shape=(index.size, columns.size), dtype=np.float64),
+                                   index=index, columns=columns)
+            df_corr.values[:] = s_corr.values
+            df_corr.columns = pd.MultiIndex.from_product([df_corr.columns, ['进入人流相关性']])
+            use_data.append(df_corr)
         if use_move_in:
             df_curve_in_1 = self.del_city_special_regions(self.get_df_curve_in(1), omitted_provinces=omitted_provinces)
             df_curve_in_2 = self.del_city_special_regions(self.get_df_curve_in(2), omitted_provinces=omitted_provinces)
@@ -634,43 +779,55 @@ class CoronavirusAnalyzer:
             df_curve_in_5 = self.del_city_special_regions(self.get_df_curve_in(5), omitted_provinces=omitted_provinces)
             df_curve_in_6 = self.del_city_special_regions(self.get_df_curve_in(6), omitted_provinces=omitted_provinces)
             df_curve_in_7 = self.del_city_special_regions(self.get_df_curve_in(7), omitted_provinces=omitted_provinces)
-            if index is None:
-                index = df_curve_in_1.index.copy()
-                columns = df_curve_in_1.columns.copy()
-            df_curve_in_1.columns = pd.MultiIndex.from_product([df_curve_in_1.columns, ['1天前进入人流量']])
-            df_curve_in_2.columns = pd.MultiIndex.from_product([df_curve_in_2.columns, ['2天前进入人流量']])
-            df_curve_in_3.columns = pd.MultiIndex.from_product([df_curve_in_3.columns, ['3天前进入人流量']])
-            df_curve_in_4.columns = pd.MultiIndex.from_product([df_curve_in_4.columns, ['4天前进入人流量']])
-            df_curve_in_5.columns = pd.MultiIndex.from_product([df_curve_in_5.columns, ['5天前进入人流量']])
-            df_curve_in_6.columns = pd.MultiIndex.from_product([df_curve_in_6.columns, ['6天前进入人流量']])
-            df_curve_in_7.columns = pd.MultiIndex.from_product([df_curve_in_7.columns, ['7天前进入人流量']])
+            df_curve_in_1.columns = pd.MultiIndex.from_product([df_curve_in_1.columns, ['1天前人流进量']])
+            df_curve_in_2.columns = pd.MultiIndex.from_product([df_curve_in_2.columns, ['2天前人流进量']])
+            df_curve_in_3.columns = pd.MultiIndex.from_product([df_curve_in_3.columns, ['3天前人流进量']])
+            df_curve_in_4.columns = pd.MultiIndex.from_product([df_curve_in_4.columns, ['4天前人流进量']])
+            df_curve_in_5.columns = pd.MultiIndex.from_product([df_curve_in_5.columns, ['5天前人流进量']])
+            df_curve_in_6.columns = pd.MultiIndex.from_product([df_curve_in_6.columns, ['6天前人流进量']])
+            df_curve_in_7.columns = pd.MultiIndex.from_product([df_curve_in_7.columns, ['7天前人流进量']])
             use_data += [df_curve_in_1, df_curve_in_2, df_curve_in_3, df_curve_in_4,
                          df_curve_in_5, df_curve_in_6, df_curve_in_7]
+        if use_move_out:
+            df_curve_out_1 = self.del_city_special_regions(self.get_df_curve_out(1), omitted_provinces=omitted_provinces)
+            df_curve_out_2 = self.del_city_special_regions(self.get_df_curve_out(2), omitted_provinces=omitted_provinces)
+            df_curve_out_3 = self.del_city_special_regions(self.get_df_curve_out(3), omitted_provinces=omitted_provinces)
+            df_curve_out_4 = self.del_city_special_regions(self.get_df_curve_out(4), omitted_provinces=omitted_provinces)
+            df_curve_out_5 = self.del_city_special_regions(self.get_df_curve_out(5), omitted_provinces=omitted_provinces)
+            df_curve_out_6 = self.del_city_special_regions(self.get_df_curve_out(6), omitted_provinces=omitted_provinces)
+            df_curve_out_7 = self.del_city_special_regions(self.get_df_curve_out(7), omitted_provinces=omitted_provinces)
+            df_curve_out_1.columns = pd.MultiIndex.from_product([df_curve_out_1.columns, ['1天前人流出量']])
+            df_curve_out_2.columns = pd.MultiIndex.from_product([df_curve_out_2.columns, ['2天前人流出量']])
+            df_curve_out_3.columns = pd.MultiIndex.from_product([df_curve_out_3.columns, ['3天前人流出量']])
+            df_curve_out_4.columns = pd.MultiIndex.from_product([df_curve_out_4.columns, ['4天前人流出量']])
+            df_curve_out_5.columns = pd.MultiIndex.from_product([df_curve_out_5.columns, ['5天前人流出量']])
+            df_curve_out_6.columns = pd.MultiIndex.from_product([df_curve_out_6.columns, ['6天前人流出量']])
+            df_curve_out_7.columns = pd.MultiIndex.from_product([df_curve_out_7.columns, ['7天前人流出量']])
+            use_data += [df_curve_out_1 + df_curve_out_2 + df_curve_out_3 + df_curve_out_4,
+                         df_curve_out_5, df_curve_out_6, df_curve_out_7]
         if use_move_in_injured:
             # 各地 7 天内（不含当天，即 1天前到7天前，的所有确诊人数作为权重 * 进入该地区的人流规模）
+            _shift = 1
             df_move_in_injured_1 = self.del_city_special_regions(self.get_df_move_in_injured(
-                1, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
+                _shift+0, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
             df_move_in_injured_2 = self.del_city_special_regions(self.get_df_move_in_injured(
-                2, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
+                _shift+1, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
             df_move_in_injured_3 = self.del_city_special_regions(self.get_df_move_in_injured(
-                3, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
+                _shift+2, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
             df_move_in_injured_4 = self.del_city_special_regions(self.get_df_move_in_injured(
-                4, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
+                _shift+3, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
             df_move_in_injured_5 = self.del_city_special_regions(self.get_df_move_in_injured(
-                5, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
+                _shift+4, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
             df_move_in_injured_6 = self.del_city_special_regions(self.get_df_move_in_injured(
-                6, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
+                _shift+5, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
             df_move_in_injured_7 = self.del_city_special_regions(self.get_df_move_in_injured(
-                7, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
+                _shift+6, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
             df_move_in_injured_8 = self.del_city_special_regions(self.get_df_move_in_injured(
-                8, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
+                _shift+7, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
             df_move_in_injured_9 = self.del_city_special_regions(self.get_df_move_in_injured(
-                9, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
+                _shift+8, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
             df_move_in_injured_10 = self.del_city_special_regions(self.get_df_move_in_injured(
-                10, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
-            if index is None:
-                index = df_move_in_injured_1.index.copy()
-                columns = df_move_in_injured_1.columns.copy()
+                _shift+9, cum_n_days, move_in_injured_consider_population), omitted_provinces=omitted_provinces)
             df_move_in_injured_1.columns = pd.MultiIndex.from_product(
                 [df_move_in_injured_1.columns, ['1天前人流风险系数']])
             df_move_in_injured_2.columns = pd.MultiIndex.from_product(
@@ -701,6 +858,18 @@ class CoronavirusAnalyzer:
                     val = local_vals.get('df_move_in_injured_{}'.format(i))
                     if val is not None:
                         use_data.append(val)
+        if use_best_fit_move_in_injured:
+            data = []
+            for region in columns:
+                s = self.__df_move_inc_corr.loc[self.__last_date, region]
+                df_move_in_injured = self.get_df_move_in_injured(
+                    int(s['shift']), int(s['window']), move_in_injured_consider_population)
+                data.append(df_move_in_injured[region])
+            df_move_in_injured = pd.DataFrame(data).T
+            s_max = df_move_in_injured.max(axis=0)
+            df_move_in_injured = df_move_in_injured / s_max
+            df_move_in_injured.columns = pd.MultiIndex.from_product([df_move_in_injured.columns, ['人流风险系数']])
+            use_data.append(df_move_in_injured)
         if use_weather:
             # 各地 14天前、13天前、......、3天前的天气滑动加权平均数据，权重值为 1,2,3,4,5,6,7,8,9,10,9,8
             df_weather_ma = self.del_city_special_regions(self.df_weather_ma, omitted_provinces=omitted_provinces)
@@ -874,21 +1043,27 @@ class CoronavirusAnalyzer:
                 regions.append(region)
                 arr_X_train = df_X_train[region].values
                 arr_y_train = df_y_train[region].values
+                if train_omit_zero_y:
+                    not_zero_mask = arr_y_train != 0
+                    arr_X_train = arr_X_train[not_zero_mask]
+                    arr_y_train = arr_y_train[not_zero_mask]
                 arr_X_test = df_X_test[region].values
                 arr_y_test = df_y_test[region].values
                 if sample_weight_type == 1:
                     # 训练集3日新增均值
-                    arr_sample_weight = np.sqrt(df_daily_inc_ma3[region]['3日新增均值'].values[:-1])
+                    arr_sample_weight = df_daily_inc_ma3[region]['3日新增均值'].values[:-1]
                 elif sample_weight_type == 2:
                     # 训练集地区疫情严重程度排序
-                    arr_sample_weight = np.sqrt(df_daily_inc_last_ma3_rank[region]['地区疫情严重程度排序'].values[:-1])
+                    arr_sample_weight = df_daily_inc_last_ma3_rank[region]['地区疫情严重程度排序'].values[:-1]
                 elif sample_weight_type == 3:
                     # 训练集真实值
-                    arr_sample_weight = np.sqrt(df_y_train[region].values)
+                    arr_sample_weight = df_y_train[region].values
                 elif sample_weight_type == 0:
                     arr_sample_weight = None
                 else:
                     raise ValueError('arr_sample_weight 值错误：{}'.format(sample_weight_type))
+                if arr_sample_weight is not None and sample_weight_power != 1:
+                    arr_sample_weight = arr_sample_weight ** sample_weight_power
                 # arr_y_train_sqrt = np.sqrt(arr_y_train)
                 if X_train is None:
                     X_train = arr_X_train
@@ -1028,15 +1203,19 @@ class CoronavirusAnalyzer:
                 self.plt.show()
         return model
 
-    def get_df_predict_real(self, predicts):
+    def get_df_predict_real(self, predicts, desc=None):
         '''
             使用 train_and_predict 的结果整理预测和实际的比对
         '''
         df_predict = pd.DataFrame(predicts).T
         regions = df_predict.columns.tolist()
         df_real = self.df_virus_daily_inc_injured.loc[df_predict.index, df_predict.columns]
+        df_real.fillna(0, inplace=True)
         df_real = df_real.astype(np.int32)
-        df_predict.columns = pd.MultiIndex.from_product([['{}'.format(c) for c in df_predict.columns], ['预测']])
+        col = '预测'
+        if desc is not None:
+            col = '{}{}'.format(col, desc)
+        df_predict.columns = pd.MultiIndex.from_product([['{}'.format(c) for c in df_predict.columns], [col]])
         df_real.columns = pd.MultiIndex.from_product([df_real.columns, ['实际']])
         df_predict = df_predict // 0.1 / 10
         df_predict_real = pd.concat([df_predict, df_real], axis=1)[regions]
@@ -1083,7 +1262,7 @@ def train_and_predict(start_date='2020-02-01', end_date=None, get_data_params=No
     while date <= end_date:
         str_date = str(date)
         date += datetime.timedelta(days=1)
-        analyzer = CoronavirusAnalyzer(str_date)
+        analyzer = CoronavirusAnalyzer(str_date, True)
         data = analyzer.get_data(**get_data_params)
         model = analyzer.get_model(data, print_log=print_log, **xgb_params)
         s_X = data['df_X_test'].loc[str_date]

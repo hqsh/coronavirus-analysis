@@ -94,6 +94,10 @@ class HuiyanCrawler:
     def df_curve_out(self):
         return self.__load_curve_df('out')
 
+    @staticmethod
+    def get_df_move_inc_corr_path(consider_population=False, file_type='h5'):
+        return 'data/huiyan/人流风险和新增确诊{}.{}'.format('-考虑人口' if consider_population else '', file_type)
+
     def get_rate(self, region, move_type='in'):
         path = self.get_path('rate', move_type, region)
         try:
