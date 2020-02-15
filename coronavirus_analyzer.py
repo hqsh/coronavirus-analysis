@@ -145,10 +145,11 @@ class CoronavirusAnalyzer:
         df = self.get_injured(self.df_virus_daily_inc)
         return self.append_dates(df)
 
-    def get_df_virus_n_days_inc_injured(self, n):
+    def get_df_virus_n_days_inc_injured(self, n, shift_one_day=True):
         '''
         最近 n 天新增确诊人数（不含当天），2 级列索引
         :param n:
+        :param shift_one_day: 是否忽略当天
         :return:
         '''
         assert n > 0
@@ -167,24 +168,36 @@ class CoronavirusAnalyzer:
             arr = arr.T.reshape(-1)
             values[end_i, :] = arr
         cols = []
-        for i in range(1, n + 1):
-            cols.insert(0, '{}天前新增'.format(i))
+        if shift_one_day:
+            for i in range(1, n + 1):
+                cols.insert(0, '{}天前新增'.format(i))
+        else:
+            for i in range(0, n):
+                if i == 0:
+                    cols.insert(0, '当天新增')
+                else:
+                    cols.insert(0, '{}天前新增'.format(i))
         df_n_days = pd.DataFrame(values, index=df_daily.index, columns=pd.MultiIndex.from_product(
             [df_daily.columns, cols]))
         return df_n_days
 
-    def get_df_virus_daily_inc_injured_cum_n(self, n):
+    def get_df_virus_daily_inc_injured_cum_n(self, n, shift_one_day=True):
         '''
-        近 n 天累计新增确诊人数（不含当天的最近 n 天新增确诊人数和，即 1天前、2天前、......、n天前的确诊人数和）
+        shift_one_day 为 True，近 n 天累计新增确诊人数（不含当天的最近 n 天新增确诊人数和，即 1天前、2天前、......、n天前的确诊人数和）
+        shift_one_day 为 False，近 n 天累计新增确诊人数（不含当天的最近 n 天新增确诊人数和，即 当天、1天前、2天前、......、n-1天前的确诊人数和）
         :param n:
+        :param shift_one_day: 是否忽略当天
         :return:
         '''
         df_virus_daily_inc_injured = self.df_virus_daily_inc_injured
         arr = df_virus_daily_inc_injured.values
         arr_cum_n = np.zeros(shape=arr.shape, dtype=np.int32)
         for end_i in range(arr.shape[0]):
-            start_i = 0 if end_i < n else end_i - n
-            arr_cum_n[end_i, :] = arr[start_i: end_i, :].sum(axis=0)
+            _end_i = end_i
+            if not shift_one_day:
+                _end_i += 1
+            start_i = 0 if _end_i < n else _end_i - n
+            arr_cum_n[end_i, :] = arr[start_i: _end_i, :].sum(axis=0)
         return pd.DataFrame(arr_cum_n, index=df_virus_daily_inc_injured.index,
                             columns=df_virus_daily_inc_injured.columns).astype(np.int32)
 
@@ -333,36 +346,41 @@ class CoronavirusAnalyzer:
         return self.__df_move_inc_corr_cp
 
     @staticmethod
-    def get_df_move_inc_corr(consider_population=False):
-        path = HuiyanCrawler.get_df_move_inc_corr_path(consider_population)
+    def get_df_move_inc_corr(n=3, consider_population=False, shift_one_day=False):
+        path = HuiyanCrawler.get_df_move_inc_corr_path(n=n, consider_population=consider_population,
+                                                       shift_one_day=shift_one_day)
         try:
             return pd.read_hdf(path, 'huiyan')
         except FileNotFoundError:
             return pd.DataFrame([])
 
-    def get_df_move_in_injured(self, shift=0, n=8, consider_population=False):
+    def get_df_move_in_injured(self, shift=0, window=1, n=3, consider_population=False, shift_one_day=True):
         '''
         进入某一地区的感染人流规模估算 = sigma ( 进入某一地区的各地人数规模 * 各来源地不含当天近 n 天的感染人数总和 ）
         :param shift: 偏移量，默认为 0，表示当天只能拿到前 shift 天的计算结果数据
-        :param n: 最近 n 天（不含当天）人流来源地的累计确诊人数，默认取 n 为 8，因经测试，n 为 8 时候相关性最大，或 8 以后相关性增幅明显变小
+        :param window: 最近 window 天进入该地区的人流风险系数的均值
+        :param n: 最近 n 天（不含当天）人流来源地的累计确诊人数
         :param consider_population: 是否考虑人流来源地的人口数量
+        :param shift_one_day: 是否不考虑当天
         :return:
         '''
-        path = 'cache/move_in_injured-{}-shift_{}-n_{}-cp_{}.csv'.format(
-            self.__last_date, shift, n, consider_population)
+        path = 'cache/{}/move_in_injured-{}-shift={}-window={}-n={}-cp={}.csv'.format(
+            'shift_one_day' if shift_one_day else 'not_shift_one_day', self.__last_date, shift, window, n,
+            consider_population)
+        df = None
         try:
             df = pd.read_csv(path, index_col=0)
-            return df.loc[self.__first_date: self.__last_date]
         except FileNotFoundError:
             pass
-        df_cum_n = self.get_df_virus_daily_inc_injured_cum_n(n)
+        if df is not None:
+            return df.loc[self.__first_date: self.__last_date]
+        df_cum_n = self.get_df_virus_daily_inc_injured_cum_n(n=n, shift_one_day=shift_one_day)
         ss = []
         for region in self.__util.huiyan_region_id:
             df_rate = self.__huiyan_crawler.get_rate(region)
             if df_rate.size > 0:
                 rate_col = '规模/人口' if consider_population else '规模'
                 df_rate = df_rate[['省', rate_col]]
-                # 湖北封城后认为从 2020-01-25 起的从湖北流入的人口，为安全的人口，可能去掉这些数据  # todo
                 df_rate.index = pd.MultiIndex.from_arrays([df_rate.index, df_rate['省']])
                 del df_rate['省']
                 s_cum_n = df_cum_n.stack(0)
@@ -375,8 +393,14 @@ class CoronavirusAnalyzer:
                 s.name = region
                 ss.append(s)
         df = pd.DataFrame(ss).T.sort_index(axis=1)
+        if window > 1:
+            arr = df.values
+            values = arr.copy()
+            for win in range(1, window):
+                values[win:] += arr[:-win]
+            values /= window
+            df.values[:] = values
         df = self.__util.shift_date_index(df, shift)
-        df = df.loc[self.__first_date: self.__last_date]
         df.to_csv(path)
         return df.loc[self.__first_date: self.__last_date]
 
@@ -391,15 +415,18 @@ class CoronavirusAnalyzer:
         df_move_in_compare = self.get_df_move_in_injured(shift=shift+compare_shift)
         return df_move_in / df_move_in_compare
 
-    def get_move_in_injured_corr(self, n=8, shift=0, consider_population=False):
+    def get_move_in_injured_corr(self, n=8, shift=0, window=1, consider_population=False, shift_one_day=True):
         '''
         获取进入地区人口风险系数和每日新增人数的相关性，返回相应的 Series
         :param n: 最近 n 天（不含当天）人流来源地的累计确诊人数，默认取 n 为 8，因经测试，n 为 8 时候相关性最大，或 8 以后相关性增幅明显变小
         :param shift:
+        :param window:
         :param consider_population: 是否考虑人口（各来源地的风险系数除以来源地的人口数）
+        :param shift_one_day: 是否忽略当天
         :return:
         '''
-        df_move_in_injured = self.get_df_move_in_injured(shift=shift, n=n, consider_population=consider_population)
+        df_move_in_injured = self.get_df_move_in_injured(
+            shift=shift, window=window, n=n, consider_population=consider_population, shift_one_day=shift_one_day)
         df_inc_injured = self.df_virus_daily_inc_injured.sort_index(axis=1)
         corr = {}
         for region in df_move_in_injured.columns:
@@ -409,7 +436,8 @@ class CoronavirusAnalyzer:
                     index = sorted(list(index))
                     df_move_in_injured = df_move_in_injured.loc[index]
                     df_inc_injured = df_inc_injured.loc[index]
-                corr[region] = np.corrcoef(df_move_in_injured[region], df_inc_injured[region])[0, 1]
+                corr[region] = np.corrcoef(df_move_in_injured.loc[self.__first_date:, region],
+                                           df_inc_injured.loc[self.__first_date:, region])[0, 1]
         return pd.Series(corr)
 
     def get_move_in_injured_corr_info(self, n=8, shift=0):
@@ -569,25 +597,39 @@ class CoronavirusAnalyzer:
                 k += 1
         self.plt.show()
 
-    def plot_move_inc_corr(self, region, date=None, consider_population=False, n=None, shift=None, resize=True):
+    def plot_move_inc_corr(self, region, date=None, consider_population=False, n=3, shift=None, window=None,
+                           resize=True, shift_one_day=False):
         '''
         画出进入人流风险系数和每日新增确诊人数的折线图，并输出相关系数
-        resize: 是否将风险系数调整为每日新增人数相同的纵坐标(最高风险系数调整为最高每日新增确诊人数的值)
+        :param region:
+        :param date:
+        :param consider_population:
+        :param n:
+        :param shift:
+        :param window:
+        :param resize: 是否将风险系数调整为每日新增人数相同的纵坐标(最高风险系数调整为最高每日新增确诊人数的值)
+        :param shift_one_day:
         '''
         date = str(date)
-        if n is None or shift is None:
-            df_corr = self.__df_move_inc_corr_cp if consider_population else self.__df_move_inc_corr
+        if shift is None is None or window is None:
+            if n == 3 and not consider_population and not shift_one_day:
+                df_corr = self.__df_move_inc_corr_cp if consider_population else self.__df_move_inc_corr
+            else:
+                df_corr = self.get_df_move_inc_corr(n=n, consider_population=consider_population,
+                                                    shift_one_day=shift_one_day)
             if df_corr.size == 0:
                 raise ValueError('无数据，需要先构造进入人流风险系数和每日新增确诊人数的相关系数表')
             if date is None or date > df_corr.index[-1]:
                 date = df_corr.index[-1]
             s = df_corr.loc[date, region]
             shift = int(s['shift'])
-            n = int(s['window'])
-        print('corr: {}'.format(self.get_move_in_injured_corr(
-            n=n, shift=shift, consider_population=consider_population)[region]))
+            window = int(s['window'])
+        s_corr = self.get_move_in_injured_corr(
+            n=n, shift=shift, window=window, consider_population=consider_population, shift_one_day=shift_one_day)
+        print('corr: {}'.format(s_corr[region]))
         s_daily_inc = self.df_virus_daily_inc_injured[region]
-        s_move_in = self.get_df_move_in_injured(shift, n)[region].loc['2020-01-11':]
+        s_move_in = self.get_df_move_in_injured(
+            shift, window, n, consider_population, shift_one_day)[region].loc[self.__first_date:]
         if resize:
             s_move_in = s_move_in / s_move_in.max() * s_daily_inc.max()
         s_daily_inc.plot(color='red', label='每日新增确诊人数', figsize=(6, 3.6))
