@@ -401,8 +401,9 @@ class CoronavirusAnalyzer:
             values /= window
             df.values[:] = values
         df = self.__util.shift_date_index(df, shift)
+        df = df.loc[:self.__last_date]
         df.to_csv(path)
-        return df.loc[self.__first_date: self.__last_date]
+        return df.loc[self.__first_date:]
 
     def get_df_move_in_injured_inc_rate(self, compare_shift=1, shift=3):
         '''

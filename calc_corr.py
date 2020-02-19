@@ -61,7 +61,7 @@ def calc_corr(last_date, n=3, consider_population=False, shift_one_day=False):
 
 
 if __name__ == '__main__':
-    for n in range(1, 11):
-        last_date = datetime.date(2020, 2, 14)
+    for n in range(3, 4):
+        last_date = datetime.date(2020, 2, 18)
         calc_corr(last_date, n=n)
         print('n = {}，处理完毕'.format(n))
