@@ -103,9 +103,9 @@ class HuiyanCrawler:
         return self.__load_curve_df('out')
 
     @staticmethod
-    def get_df_move_inc_corr_path(consider_population=False, file_type='h5', n=3, shift_one_day=False):
-        return 'data/huiyan/人流风险和新增确诊/人流风险和新增确诊{}{}-n={}.{}'.format(
-            '-考虑人口' if consider_population else '', '' if shift_one_day else '-考虑当天', n, file_type)
+    def get_df_move_inc_corr_path(consider_population=False, file_type='h5', n=3, shift_one_day=False, sample_cnt=0):
+        return 'data/huiyan/人流风险和新增确诊/人流风险和新增确诊{}{}-n={}-sample_cnt={}.{}'.format(
+            '-考虑人口' if consider_population else '', '' if shift_one_day else '-考虑当天', n, sample_cnt, file_type)
 
     def get_rate(self, region, move_type='in', is_city=False):
         '''
@@ -244,5 +244,5 @@ class HuiyanCrawler:
 
 
 if __name__ == '__main__':
-    crawler = HuiyanCrawler('2020-02-18')
+    crawler = HuiyanCrawler('2020-02-22')
     crawler.run()

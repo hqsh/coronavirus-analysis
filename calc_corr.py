@@ -6,8 +6,9 @@ import pandas as pd
 import datetime
 
 
-def calc_corr(last_date, n=3, consider_population=False, shift_one_day=False):
-    h5_file_path = HuiyanCrawler.get_df_move_inc_corr_path(consider_population, n=n, shift_one_day=shift_one_day)
+def calc_corr(last_date, n=3, consider_population=False, shift_one_day=False, sample_cnt=0):
+    h5_file_path = HuiyanCrawler.get_df_move_inc_corr_path(
+        consider_population, n=n, shift_one_day=shift_one_day, sample_cnt=sample_cnt)
     try:
         df = pd.read_hdf(h5_file_path, 'huiyan')
         # print(df)
@@ -28,7 +29,7 @@ def calc_corr(last_date, n=3, consider_population=False, shift_one_day=False):
             for window in range(1, 11):
                 s_corr = analyzer.get_move_in_injured_corr(
                     n=n, shift=shift, window=window, consider_population=consider_population,
-                    shift_one_day=shift_one_day)
+                    shift_one_day=shift_one_day, sample_cnt=sample_cnt)
                 for region, val in zip(s_corr.index, s_corr.values):
                     if not np.isnan(val) and (region not in data[str_date] or data[str_date][region]['corr'] < val):
                         data[str_date][region] = {'shift': shift, 'window': window, 'corr': val}
@@ -53,7 +54,7 @@ def calc_corr(last_date, n=3, consider_population=False, shift_one_day=False):
     if updated:
         df.to_hdf(h5_file_path, 'huiyan')
         excel_file_path = HuiyanCrawler.get_df_move_inc_corr_path(
-            consider_population, 'xlsx', n=n, shift_one_day=shift_one_day)
+            consider_population, 'xlsx', n=n, shift_one_day=shift_one_day, sample_cnt=sample_cnt)
         df.to_excel(excel_file_path)
         print('数据更新完毕')
     else:
@@ -62,6 +63,8 @@ def calc_corr(last_date, n=3, consider_population=False, shift_one_day=False):
 
 if __name__ == '__main__':
     for n in range(3, 4):
-        last_date = datetime.date(2020, 2, 18)
-        calc_corr(last_date, n=n)
-        print('n = {}，处理完毕'.format(n))
+        for sample_cnt in [0, 14, 21, 28]:
+            last_date = datetime.date(2020, 2, 22)
+            print('n = {}，sample_cnt = {}，处理开始'.format(n, sample_cnt))
+            calc_corr(last_date, n=n, sample_cnt=sample_cnt)
+            print('n = {}，sample_cnt = {}，处理完毕'.format(n, sample_cnt))

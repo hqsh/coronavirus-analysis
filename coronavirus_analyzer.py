@@ -20,11 +20,12 @@ class CoronavirusAnalyzer:
     冠状病毒分析
     '''
 
-    def __init__(self, last_date=None, is_predict=False, first_date=None):
+    def __init__(self, last_date=None, is_predict=False, first_date=None, sample_cnt=0):
         '''
         :param str or datetime.date last_date: 最后一天，对日频数据有效，用于模拟历史，会把最后一天数据用前一天数据填充，格式是 yyyy-mm-dd
         :param bool is_predict: 是否用于预测，如果是的话，在取数据时候会做 index 偏移 1 位的处理
         :param str or datetime.date last_date: 最早一天
+        :param int sample_cnt: 计算相关性的最大样本数，值若 <= 0，代表从 first_date 起
         :return:
         '''
         self.__is_predict = is_predict
@@ -38,8 +39,8 @@ class CoronavirusAnalyzer:
             self.__first_date = '2020-01-21' if is_predict else '2020-01-11'  # 有效数据的第一天
         else:
             self.__first_date = str(first_date)
-        self.__df_move_inc_corr = self.get_df_move_inc_corr()
-        self.__df_move_inc_corr_cp = self.get_df_move_inc_corr(True)
+        self.__df_move_inc_corr = self.get_df_move_inc_corr(sample_cnt=sample_cnt)
+        self.__df_move_inc_corr_cp = self.get_df_move_inc_corr(True, sample_cnt=sample_cnt)
         df = self.df_virus_daily_inc_injured
         no_inc_injured_regions = df.columns[df.iloc[-1] == 0]
         df = self.df_virus_daily_inc
@@ -346,9 +347,9 @@ class CoronavirusAnalyzer:
         return self.__df_move_inc_corr_cp
 
     @staticmethod
-    def get_df_move_inc_corr(n=3, consider_population=False, shift_one_day=False):
+    def get_df_move_inc_corr(n=3, consider_population=False, shift_one_day=False, sample_cnt=0):
         path = HuiyanCrawler.get_df_move_inc_corr_path(n=n, consider_population=consider_population,
-                                                       shift_one_day=shift_one_day)
+                                                       shift_one_day=shift_one_day, sample_cnt=sample_cnt)
         try:
             return pd.read_hdf(path, 'huiyan')
         except FileNotFoundError:
@@ -416,7 +417,8 @@ class CoronavirusAnalyzer:
         df_move_in_compare = self.get_df_move_in_injured(shift=shift+compare_shift)
         return df_move_in / df_move_in_compare
 
-    def get_move_in_injured_corr(self, n=8, shift=0, window=1, consider_population=False, shift_one_day=True):
+    def get_move_in_injured_corr(self, n=8, shift=0, window=1, consider_population=False, shift_one_day=True,
+                                 sample_cnt=0):
         '''
         获取进入地区人口风险系数和每日新增人数的相关性，返回相应的 Series
         :param n: 最近 n 天（不含当天）人流来源地的累计确诊人数，默认取 n 为 8，因经测试，n 为 8 时候相关性最大，或 8 以后相关性增幅明显变小
@@ -424,6 +426,7 @@ class CoronavirusAnalyzer:
         :param window:
         :param consider_population: 是否考虑人口（各来源地的风险系数除以来源地的人口数）
         :param shift_one_day: 是否忽略当天
+        :param int sample_cnt: 计算相关性的最大样本数，值若 <= 0，代表从 first_date 起
         :return:
         '''
         df_move_in_injured = self.get_df_move_in_injured(
@@ -437,8 +440,12 @@ class CoronavirusAnalyzer:
                     index = sorted(list(index))
                     df_move_in_injured = df_move_in_injured.loc[index]
                     df_inc_injured = df_inc_injured.loc[index]
-                corr[region] = np.corrcoef(df_move_in_injured.loc[self.__first_date:, region],
-                                           df_inc_injured.loc[self.__first_date:, region])[0, 1]
+                arr_move_in_injured = df_move_in_injured.loc[self.__first_date:, region].values
+                arr_inc_injured = df_inc_injured.loc[self.__first_date:, region].values
+                if sample_cnt > 0:
+                    arr_move_in_injured = arr_move_in_injured[-sample_cnt:]
+                    arr_inc_injured = arr_inc_injured[-sample_cnt:]
+                corr[region] = np.corrcoef(arr_move_in_injured, arr_inc_injured)[0, 1]
         return pd.Series(corr)
 
     def get_move_in_injured_corr_info(self, n=8, shift=0):
@@ -599,7 +606,7 @@ class CoronavirusAnalyzer:
         self.plt.show()
 
     def plot_move_inc_corr(self, region, date=None, consider_population=False, n=3, shift=None, window=None,
-                           resize=True, shift_one_day=False):
+                           resize=True, shift_one_day=False, sample_cnt=0):
         '''
         画出进入人流风险系数和每日新增确诊人数的折线图，并输出相关系数
         :param region:
@@ -610,6 +617,7 @@ class CoronavirusAnalyzer:
         :param window:
         :param resize: 是否将风险系数调整为每日新增人数相同的纵坐标(最高风险系数调整为最高每日新增确诊人数的值)
         :param shift_one_day:
+        :param int sample_cnt: 计算相关性的最大样本数，值若 <= 0，代表从 first_date 起
         '''
         date = str(date)
         if shift is None is None or window is None:
@@ -626,7 +634,8 @@ class CoronavirusAnalyzer:
             shift = int(s['shift'])
             window = int(s['window'])
         s_corr = self.get_move_in_injured_corr(
-            n=n, shift=shift, window=window, consider_population=consider_population, shift_one_day=shift_one_day)
+            n=n, shift=shift, window=window, consider_population=consider_population, shift_one_day=shift_one_day,
+            sample_cnt=sample_cnt)
         print('corr: {}'.format(s_corr[region]))
         s_daily_inc = self.df_virus_daily_inc_injured[region]
         s_move_in = self.get_df_move_in_injured(
@@ -761,7 +770,8 @@ class CoronavirusAnalyzer:
                  use_in_out_rate=True, use_move_in_inc_rate=False, use_ma3=False, use_ma5=False,
                  use_ma7=False, use_last_ma3=True, use_last_ma3_rank=False, use_region_risk_level=False,
                  use_region_cluster_one_hot=False, use_weather=False, sample_weight_type=1,
-                 sample_weight_power=0.5, omit_hubei=True, selected_regions=None, train_omit_zero_y=False):
+                 sample_weight_power=0.5, omit_hubei=True, selected_regions=None, train_omit_zero_y=False,
+                 sample_cnt=0):
         '''
         获取训练和预测数据
         predict_day_cnt             预测的天数，值代表预测后面连续的多天每日新增均值
@@ -791,6 +801,7 @@ class CoronavirusAnalyzer:
         omit_hubei                  是否忽略湖北
         selected_regions            只学习和预测某些地区，如果为 None，表示都学习和预测
         train_omit_zero_y           训练集忽略预测值为 0 的
+        sample_cnt                  函数 get_move_in_injured_corr 的参数，计算相关性的最大样本数，值若 <= 0，代表从 first_date 起
         '''
         if use_move_in and (use_move_in_injured or use_best_fit_move_in_injured):
             use_move_in_injured = use_best_fit_move_in_injured = False
@@ -808,7 +819,7 @@ class CoronavirusAnalyzer:
         dfs = []
         use_data = []  # 所有使用的数据 list
         if use_move_in_corr:
-            s_corr = self.get_move_in_injured_corr()[columns]
+            s_corr = self.get_move_in_injured_corr(sample_cnt=sample_cnt)[columns]
             df_corr = pd.DataFrame(np.zeros(shape=(index.size, columns.size), dtype=np.float64),
                                    index=index, columns=columns)
             df_corr.values[:] = s_corr.values
@@ -1314,3 +1325,9 @@ def train_and_predict(start_date='2020-02-01', end_date=None, get_data_params=No
             predict[region] = model.predict(s_X[region].values.reshape(1, -1))[0]
         predicts[str_date] = pd.Series(predict)
     return predicts
+
+
+# last_date = '2020-02-18'
+# sample_cnt = 14
+# analyzer = CoronavirusAnalyzer(last_date, first_date='2020-01-17', sample_cnt=sample_cnt)
+# analyzer.plot_move_inc_corr('黑龙江', '2020-02-18', n=3, shift=0, window=1, sample_cnt=sample_cnt)
