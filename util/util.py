@@ -1,4 +1,5 @@
 from configparser import ConfigParser
+from _collections import OrderedDict
 from copy import deepcopy
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -57,7 +58,7 @@ class Util(Singleton):
 
     def __init_region_info(self):
         self.__region_info = {}  # key / value 形式的地区信息，value 也是个 dict
-        for section, option in zip(['region', 'region'], ['pinyin', 'province_capital']):
+        for section, option in zip(['region', 'region', 'region'], ['pinyin', 'province_capital', 'english']):
             config_data = self.get_config(section, option)
             key = '{}-{}'.format(section, option)
             self.__region_info[key] = {}  # key / value 形式的地区信息
@@ -90,8 +91,8 @@ class Util(Singleton):
         :param option:
         :return:
         '''
-        str_config = self.get_config('huiyan', 'region_id')
-        res_dict = {}
+        str_config = self.get_config(section, option)
+        res_dict = OrderedDict()
         if str_config is not None and str_config != '':
             for key_val in str_config.split(','):
                 key, val = key_val.split(':')

@@ -75,12 +75,12 @@ class DxyCrawler:
         :param file_name_perfix: 文件前缀名
         :return:
         '''
-        dir = 'data/virus' if file_name_append in ['h5', 'xlsx'] else 'data'
+        dir_path = 'data/virus' if file_name_append in ['h5', 'xlsx'] else 'data'
         if file_name_append == 'html':
-            dir = '{}/html'.format(dir)
+            dir_path = '{}/html/dxy_data'.format(dir_path)
         if name == 'init_data' or file_name_perfix is None:
-            return '{}/{}.{}'.format(dir, name, file_name_append)
-        return '{}/{}_{}.{}'.format(dir, cls.__file_name_perfix, name, file_name_append)
+            return '{}/{}.{}'.format(dir_path, name, file_name_append)
+        return '{}/{}_{}.{}'.format(dir_path, cls.__file_name_perfix, name, file_name_append)
 
     @classmethod
     def get_dxy_file_path(cls, name, file_name_append='h5'):
@@ -127,9 +127,9 @@ class DxyCrawler:
         :return:
         '''
         file_paths = []
-        for file_name in os.listdir('data/html'):
+        for file_name in os.listdir('data/html/dxy_data'):
             if file_name.endswith('.html'):
-                file_paths.append('data/html/{}'.format(file_name))
+                file_paths.append('data/html/dxy_data/{}'.format(file_name))
         file_paths.sort()
         for path in file_paths:
             yield path
@@ -223,6 +223,7 @@ class DxyCrawler:
                     file = open(file_path)
                     lines = file.readlines()
                     html_text = '\n'.join(lines)
+                    file.close()
                 else:
                     file_path = None
                     res = requests.get(self.__data_url)

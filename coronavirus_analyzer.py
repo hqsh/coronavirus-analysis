@@ -1,5 +1,6 @@
 from collections import OrderedDict
 from dxy_crawler import DxyCrawler
+from dxy_daily_crawler import DxyDailyCrawler
 from huiyan_crawler import HuiyanCrawler
 from matplotlib.colors import rgb2hex
 from matplotlib.patches import Polygon
@@ -20,18 +21,22 @@ class CoronavirusAnalyzer:
     冠状病毒分析
     '''
 
-    def __init__(self, last_date=None, is_predict=False, first_date=None, sample_cnt=0):
+    def __init__(self, last_date=None, is_predict=False, first_date=None, sample_cnt=0, in_english=False,
+                 use_dxy_new_version_data=True):
         '''
         :param str or datetime.date last_date: 最后一天，对日频数据有效，用于模拟历史，会把最后一天数据用前一天数据填充，格式是 yyyy-mm-dd
         :param bool is_predict: 是否用于预测，如果是的话，在取数据时候会做 index 偏移 1 位的处理
         :param str or datetime.date last_date: 最早一天
         :param int sample_cnt: 计算相关性的最大样本数，值若 <= 0，代表从 first_date 起
+        :param in_english: 是否使用英文输出
+        :param use_dxy_new_version_data: 丁香园在 2 月底开始公布历史日频数据
         :return:
         '''
         self.__is_predict = is_predict
         self.__util = Util()
         self.__huiyan_crawler = HuiyanCrawler()
         self.__weather_crawler = WeatherCrawler()
+        self.__region_to_english = self.__util.get_region_info('region', 'english')
         if last_date is None:
             last_date = datetime.date.today()
         self.__last_date = str(last_date)
@@ -39,8 +44,11 @@ class CoronavirusAnalyzer:
             self.__first_date = '2020-01-21' if is_predict else '2020-01-11'  # 有效数据的第一天
         else:
             self.__first_date = str(first_date)
-        self.__df_move_inc_corr = self.get_df_move_inc_corr(sample_cnt=sample_cnt)
-        self.__df_move_inc_corr_cp = self.get_df_move_inc_corr(True, sample_cnt=sample_cnt)
+        self.__df_move_inc_corr = self.get_df_move_inc_corr(sample_cnt=sample_cnt, in_english=in_english)
+        self.__df_move_inc_corr_cp = self.get_df_move_inc_corr(True, sample_cnt=sample_cnt, in_english=in_english)
+        self.__in_english = in_english
+        self.__use_dxy_new_version_data = use_dxy_new_version_data
+        self.__dxy_daily_crawler = DxyDailyCrawler()
         df = self.df_virus_daily_inc_injured
         no_inc_injured_regions = df.columns[df.iloc[-1] == 0]
         df = self.df_virus_daily_inc
@@ -104,7 +112,10 @@ class CoronavirusAnalyzer:
         日频病毒感染数据
         :return:
         '''
-        df = DxyCrawler.load_dxy_data_frame('recent_daily', 'h5')
+        if self.__use_dxy_new_version_data:
+            df = self.__dxy_daily_crawler.df_virus_daily
+        else:
+            df = DxyCrawler.load_dxy_data_frame('recent_daily', 'h5')
         if self.__last_date is not None:
             df = df.loc[self.__first_date: self.__last_date]
         df = df.astype(np.int32)
@@ -132,9 +143,13 @@ class CoronavirusAnalyzer:
         日频新增病毒感染数据
         :return:
         '''
-        df = DxyCrawler.load_dxy_data_frame('recent_daily_inc', 'h5')
+        if self.__use_dxy_new_version_data:
+            df = self.__dxy_daily_crawler.df_virus_daily_inc
+        else:
+            df = DxyCrawler.load_dxy_data_frame('recent_daily_inc', 'h5')
         if self.__last_date is not None:
             df = df.loc[self.__first_date: self.__last_date]
+        df.fillna(0, inplace=True)
         return df.astype(np.int32)
 
     @property
@@ -144,7 +159,8 @@ class CoronavirusAnalyzer:
         :return:
         '''
         df = self.get_injured(self.df_virus_daily_inc)
-        return self.append_dates(df)
+        df = self.append_dates(df)
+        return self.__data_frame_region_to_english_if_needed(df)
 
     def get_df_virus_n_days_inc_injured(self, n, shift_one_day=True):
         '''
@@ -312,7 +328,9 @@ class CoronavirusAnalyzer:
 
     @property
     def df_curve_in(self):
-        return self.__huiyan_crawler.df_curve_in
+        df = self.__huiyan_crawler.df_curve_in
+        df = self.__data_frame_region_to_english_if_needed(df)
+        return df
 
     def get_df_curve_in(self, shift=0):
         df_curve_in = self.__util.shift_date_index(self.df_curve_in, shift)
@@ -324,7 +342,9 @@ class CoronavirusAnalyzer:
 
     @property
     def df_curve_out(self):
-        return self.__huiyan_crawler.df_curve_out
+        df = self.__huiyan_crawler.df_curve_out
+        df = self.__data_frame_region_to_english_if_needed(df)
+        return df
 
     def get_df_curve_in_out_rate(self, shift=0):
         df = self.df_curve_in / self.df_curve_out
@@ -339,21 +359,35 @@ class CoronavirusAnalyzer:
         return self.get_df_move_in_injured()
 
     @property
+    def df_move_in_risk(self):
+        return self.get_df_move_in_injured(shift_one_day=False)
+
+    @property
     def df_move_inc_corr(self):
-        return self.__df_move_inc_corr
+        df = self.__df_move_inc_corr
+        if self.__last_date in df.index:
+            df = self.__df_move_inc_corr[:self.__last_date]
+        return df
 
     @property
     def df_move_inc_corr_cp(self):
         return self.__df_move_inc_corr_cp
 
-    @staticmethod
-    def get_df_move_inc_corr(n=3, consider_population=False, shift_one_day=False, sample_cnt=0):
+    def get_df_move_inc_corr(self, n=3, consider_population=False, shift_one_day=False, sample_cnt=0, in_english=False):
         path = HuiyanCrawler.get_df_move_inc_corr_path(n=n, consider_population=consider_population,
                                                        shift_one_day=shift_one_day, sample_cnt=sample_cnt)
         try:
-            return pd.read_hdf(path, 'huiyan')
+            df = pd.read_hdf(path, 'huiyan')
         except FileNotFoundError:
             return pd.DataFrame([])
+        if in_english:
+            dfs = []
+            for region in df.columns.levels[0]:
+                _df = df[region].copy()
+                _df.columns = pd.MultiIndex.from_product([[self.__region_to_english[region]], _df.columns])
+                dfs.append(_df)
+            df = pd.concat(dfs, axis=1)
+        return df
 
     def get_df_move_in_injured(self, shift=0, window=1, n=3, consider_population=False, shift_one_day=True):
         '''
@@ -374,7 +408,8 @@ class CoronavirusAnalyzer:
         except FileNotFoundError:
             pass
         if df is not None:
-            return df.loc[self.__first_date: self.__last_date]
+            df = df.loc[self.__first_date: self.__last_date]
+            return self.__data_frame_region_to_english_if_needed(df)
         df_cum_n = self.get_df_virus_daily_inc_injured_cum_n(n=n, shift_one_day=shift_one_day)
         ss = []
         for region in self.__util.huiyan_region_id:
@@ -404,7 +439,9 @@ class CoronavirusAnalyzer:
         df = self.__util.shift_date_index(df, shift)
         df = df.loc[:self.__last_date]
         df.to_csv(path)
-        return df.loc[self.__first_date:]
+        df = df.loc[self.__first_date:]
+        df = self.__data_frame_region_to_english_if_needed(df)
+        return df
 
     def get_df_move_in_injured_inc_rate(self, compare_shift=1, shift=3):
         '''
@@ -605,6 +642,43 @@ class CoronavirusAnalyzer:
                 k += 1
         self.plt.show()
 
+    def __region_to_english_if_needed(self, region):
+        if self.__in_english and region in self.__region_to_english:
+            return self.__region_to_english[region]
+        return region
+
+    def __series_region_to_english_if_needed(self, s):
+        if self.__in_english:
+            index = []
+            not_found_regions = []
+            for region in s.index:
+                if region in self.__region_to_english:
+                    index.append(self.__region_to_english[region])
+                else:
+                    not_found_regions.append(region)
+            if 0 < len(not_found_regions) < s.size:
+                raise ValueError('index 长度不正确，可能是中文索引有不支持的地区，需要添加：{}'
+                                 .format('、'.join(not_found_regions)))
+            if len(index) > 0:
+                s.index = index
+        return s
+
+    def __data_frame_region_to_english_if_needed(self, df):
+        if self.__in_english:
+            columns = []
+            not_found_regions = []
+            for region in df.columns:
+                if region in self.__region_to_english:
+                    columns.append(self.__region_to_english[region])
+                else:
+                    not_found_regions.append(region)
+            if 0 < len(not_found_regions) < df.shape[1]:
+                raise ValueError('index 长度不正确，可能是中文索引有不支持的地区，需要添加：{}'
+                                 .format('、'.join(not_found_regions)))
+            if len(columns) > 0:
+                df.columns = columns
+        return df
+
     def plot_move_inc_corr(self, region, date=None, consider_population=False, n=3, shift=None, window=None,
                            resize=True, shift_one_day=False, sample_cnt=0):
         '''
@@ -619,6 +693,7 @@ class CoronavirusAnalyzer:
         :param shift_one_day:
         :param int sample_cnt: 计算相关性的最大样本数，值若 <= 0，代表从 first_date 起
         '''
+        region = self.__region_to_english_if_needed(region)
         date = str(date)
         if shift is None is None or window is None:
             if n == 3 and not consider_population and not shift_one_day:
@@ -636,16 +711,22 @@ class CoronavirusAnalyzer:
         s_corr = self.get_move_in_injured_corr(
             n=n, shift=shift, window=window, consider_population=consider_population, shift_one_day=shift_one_day,
             sample_cnt=sample_cnt)
+        s_corr = self.__series_region_to_english_if_needed(s_corr)
         print('corr: {}'.format(s_corr[region]))
         s_daily_inc = self.df_virus_daily_inc_injured[region]
         s_move_in = self.get_df_move_in_injured(
             shift, window, n, consider_population, shift_one_day)[region].loc[self.__first_date:]
         if resize:
             s_move_in = s_move_in / s_move_in.max() * s_daily_inc.max()
-        s_daily_inc.plot(color='red', label='每日新增确诊人数', figsize=(6, 3.6))
-        s_move_in.plot(color='blue', label='进入人流风险系数', figsize=(6, 3.6))
-        # s_daily_inc.plot(color='red', label='每日新增确诊人数', figsize=(10, 6))
-        # s_move_in.plot(color='blue', label='进入人流风险系数', figsize=(10, 6))
+        # figsize = (6, 3.6)
+        figsize = (8, 5)
+        label = 'daily new diagnosed' if self.__in_english else '每日新增确诊人数'
+        if self.__in_english:
+            s_daily_inc.index.name = 'date'
+            s_move_in.index.name = 'date'
+        s_daily_inc.plot(color='red', label=label, figsize=figsize)
+        label = 'daily immigration risk' if self.__in_english else '进入人流风险系数'
+        s_move_in.plot(color='blue', label=label, figsize=figsize)
         self.plt.title(region)
         self.plt.legend(loc='upper left')
 
@@ -1325,9 +1406,3 @@ def train_and_predict(start_date='2020-02-01', end_date=None, get_data_params=No
             predict[region] = model.predict(s_X[region].values.reshape(1, -1))[0]
         predicts[str_date] = pd.Series(predict)
     return predicts
-
-
-# last_date = '2020-02-18'
-# sample_cnt = 14
-# analyzer = CoronavirusAnalyzer(last_date, first_date='2020-01-17', sample_cnt=sample_cnt)
-# analyzer.plot_move_inc_corr('黑龙江', '2020-02-18', n=3, shift=0, window=1, sample_cnt=sample_cnt)

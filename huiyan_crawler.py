@@ -244,5 +244,5 @@ class HuiyanCrawler:
 
 
 if __name__ == '__main__':
-    crawler = HuiyanCrawler('2020-02-22')
+    crawler = HuiyanCrawler('2020-02-27')
     crawler.run()

@@ -1,12 +1,17 @@
 from collections import OrderedDict
 from coronavirus_analyzer import CoronavirusAnalyzer
 from huiyan_crawler import HuiyanCrawler
+from util.util import Util
 import numpy as np
 import pandas as pd
 import datetime
 
 
-def calc_corr(last_date, n=3, consider_population=False, shift_one_day=False, sample_cnt=0):
+def calc_corr(last_date=None, n=3, consider_population=False, shift_one_day=False, sample_cnt=0):
+    if last_date is None:
+        last_date = datetime.date.today() - datetime.timedelta(days=1)
+    elif isinstance(last_date, str):
+        last_date = Util().str_date_to_date(last_date)
     h5_file_path = HuiyanCrawler.get_df_move_inc_corr_path(
         consider_population, n=n, shift_one_day=shift_one_day, sample_cnt=sample_cnt)
     try:
@@ -63,8 +68,8 @@ def calc_corr(last_date, n=3, consider_population=False, shift_one_day=False, sa
 
 if __name__ == '__main__':
     for n in range(3, 4):
-        for sample_cnt in [0, 14, 21, 28]:
-            last_date = datetime.date(2020, 2, 22)
+        for sample_cnt in [0]:  # , 7, 14, 21, 28, 35
+            last_date = datetime.date(2020, 2, 27)
             print('n = {}，sample_cnt = {}，处理开始'.format(n, sample_cnt))
             calc_corr(last_date, n=n, sample_cnt=sample_cnt)
             print('n = {}，sample_cnt = {}，处理完毕'.format(n, sample_cnt))

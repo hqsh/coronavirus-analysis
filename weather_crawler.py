@@ -299,5 +299,5 @@ class WeatherCrawler:
 
 
 if __name__ == '__main__':
-    crawler = WeatherCrawler(datetime.date(year=2019, month=12, day=1))
+    crawler = WeatherCrawler(datetime.date(year=2020, month=2, day=1))
     crawler.run()
