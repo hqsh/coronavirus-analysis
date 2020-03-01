@@ -330,7 +330,7 @@ class CoronavirusAnalyzer:
     def df_curve_in(self):
         df = self.__huiyan_crawler.df_curve_in
         df = self.__data_frame_region_to_english_if_needed(df)
-        return df
+        return df.loc[self.__first_date: self.__last_date]
 
     def get_df_curve_in(self, shift=0):
         df_curve_in = self.__util.shift_date_index(self.df_curve_in, shift)
@@ -694,6 +694,8 @@ class CoronavirusAnalyzer:
         :param int sample_cnt: 计算相关性的最大样本数，值若 <= 0，代表从 first_date 起
         '''
         region = self.__region_to_english_if_needed(region)
+        if date is None:
+            date = self.__last_date
         date = str(date)
         if shift is None is None or window is None:
             if n == 3 and not consider_population and not shift_one_day:
@@ -703,7 +705,7 @@ class CoronavirusAnalyzer:
                                                     shift_one_day=shift_one_day)
             if df_corr.size == 0:
                 raise ValueError('无数据，需要先构造进入人流风险系数和每日新增确诊人数的相关系数表')
-            if date is None or date > df_corr.index[-1]:
+            if date > df_corr.index[-1]:
                 date = df_corr.index[-1]
             s = df_corr.loc[date, region]
             shift = int(s['shift'])
@@ -714,8 +716,10 @@ class CoronavirusAnalyzer:
         s_corr = self.__series_region_to_english_if_needed(s_corr)
         print('corr: {}'.format(s_corr[region]))
         s_daily_inc = self.df_virus_daily_inc_injured[region]
+        s_daily_inc = s_daily_inc.loc[:date]
         s_move_in = self.get_df_move_in_injured(
             shift, window, n, consider_population, shift_one_day)[region].loc[self.__first_date:]
+        s_move_in = s_move_in.loc[:date]
         if resize:
             s_move_in = s_move_in / s_move_in.max() * s_daily_inc.max()
         # figsize = (6, 3.6)
