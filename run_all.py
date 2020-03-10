@@ -12,9 +12,6 @@ if __name__ == '__main__':
     crawler = HuiyanCrawler()
     crawler.run()
 
-    for n in range(3, 4):
-        calc_corr(n=n)
-        print('n = {}，处理完毕'.format(n))
-
-    crawler = WeatherCrawler(datetime.date(year=2020, month=2, day=1))
+    today = datetime.date.today()
+    crawler = WeatherCrawler(datetime.date(year=today.year, month=today.month, day=1))
     crawler.run()

@@ -4,6 +4,7 @@ from dxy_daily_crawler import DxyDailyCrawler
 from huiyan_crawler import HuiyanCrawler
 from matplotlib.colors import rgb2hex
 from matplotlib.patches import Polygon
+from sklearn import preprocessing
 from sklearn.cluster import KMeans
 from sklearn.model_selection import GridSearchCV
 from util.util import Util, with_logger
@@ -37,6 +38,7 @@ class CoronavirusAnalyzer:
         self.__huiyan_crawler = HuiyanCrawler()
         self.__weather_crawler = WeatherCrawler()
         self.__region_to_english = self.__util.get_region_info('region', 'english')
+        self.__region_to_chinese = {v: k for k, v in self.__region_to_english.items()}
         if last_date is None:
             last_date = datetime.date.today()
         self.__last_date = str(last_date)
@@ -118,6 +120,7 @@ class CoronavirusAnalyzer:
             df = DxyCrawler.load_dxy_data_frame('recent_daily', 'h5')
         if self.__last_date is not None:
             df = df.loc[self.__first_date: self.__last_date]
+        df.fillna(method='pad', inplace=True)
         df = df.astype(np.int32)
         return self.append_dates(df)
 
@@ -127,7 +130,9 @@ class CoronavirusAnalyzer:
         日频病毒感染数据中的确诊人数
         :return:
         '''
-        return self.get_injured(self.df_virus_daily).astype(np.int32)
+        df = self.get_injured(self.df_virus_daily).astype(np.int32)
+        df = self.__data_frame_region_to_english_if_needed(df)
+        return df
 
     @property
     def df_recent_daily_injured(self):
@@ -359,14 +364,29 @@ class CoronavirusAnalyzer:
         return self.get_df_move_in_injured()
 
     @property
+    def df_move_in_injured_cp(self):
+        return self.get_df_move_in_injured(consider_population=True)
+
+    @property
     def df_move_in_risk(self):
         return self.get_df_move_in_injured(shift_one_day=False)
+
+    @property
+    def df_move_in_risk_cp(self):
+        return self.get_df_move_in_injured(shift_one_day=False, consider_population=True)
 
     @property
     def df_move_inc_corr(self):
         df = self.__df_move_inc_corr
         if self.__last_date in df.index:
             df = self.__df_move_inc_corr[:self.__last_date]
+        dfs = []
+        if self.__in_english:
+            for region in df.columns.levels[0]:
+                df_region = df[region]
+                df_region.columns = pd.MultiIndex.from_product([[region], ['corr', 'corr delta', 'offset', 'window']])
+                dfs.append(df_region)
+            df = pd.concat(dfs, axis=1)
         return df
 
     @property
@@ -410,7 +430,10 @@ class CoronavirusAnalyzer:
         if df is not None:
             df = df.loc[self.__first_date: self.__last_date]
             return self.__data_frame_region_to_english_if_needed(df)
+        in_english = self.__in_english
+        self.__in_english = False
         df_cum_n = self.get_df_virus_daily_inc_injured_cum_n(n=n, shift_one_day=shift_one_day)
+        self.__in_english = in_english
         ss = []
         for region in self.__util.huiyan_region_id:
             df_rate = self.__huiyan_crawler.get_rate(region)
@@ -661,6 +684,8 @@ class CoronavirusAnalyzer:
                                  .format('、'.join(not_found_regions)))
             if len(index) > 0:
                 s.index = index
+            if s.index.name == '日期':
+                s.index.name = 'date'
         return s
 
     def __data_frame_region_to_english_if_needed(self, df):
@@ -677,27 +702,36 @@ class CoronavirusAnalyzer:
                                  .format('、'.join(not_found_regions)))
             if len(columns) > 0:
                 df.columns = columns
+            if df.index.name in ['日期', None]:
+                df.index.name = 'date'
+            for region in ['Wuhan', 'Wenzhou']:
+                if region in df.columns:
+                    del df[region]
         return df
 
-    def plot_move_inc_corr(self, region, date=None, consider_population=False, n=3, shift=None, window=None,
-                           resize=True, shift_one_day=False, sample_cnt=0):
+    def plot_move_inc_corr(self, region, date=None, consider_population=False, n=3, offset=None, window=None,
+                           resize=True, shift_one_day=False, sample_cnt=0, use_best_fit=True):
         '''
         画出进入人流风险系数和每日新增确诊人数的折线图，并输出相关系数
         :param region:
         :param date:
         :param consider_population:
         :param n:
-        :param shift:
+        :param offset:
         :param window:
         :param resize: 是否将风险系数调整为每日新增人数相同的纵坐标(最高风险系数调整为最高每日新增确诊人数的值)
         :param shift_one_day:
         :param int sample_cnt: 计算相关性的最大样本数，值若 <= 0，代表从 first_date 起
+        :param use_best_fit:
         '''
+        if not use_best_fit and offset is None and window is None:
+            offset = 0
+            window = 1
         region = self.__region_to_english_if_needed(region)
         if date is None:
             date = self.__last_date
         date = str(date)
-        if shift is None is None or window is None:
+        if offset is None or window is None:
             if n == 3 and not consider_population and not shift_one_day:
                 df_corr = self.__df_move_inc_corr_cp if consider_population else self.__df_move_inc_corr
             else:
@@ -707,29 +741,42 @@ class CoronavirusAnalyzer:
                 raise ValueError('无数据，需要先构造进入人流风险系数和每日新增确诊人数的相关系数表')
             if date > df_corr.index[-1]:
                 date = df_corr.index[-1]
+            # region_in_chinese = self.__region_to_chinese[region] if self.__in_english else region
             s = df_corr.loc[date, region]
-            shift = int(s['shift'])
+            offset = int(s['shift'])
             window = int(s['window'])
         s_corr = self.get_move_in_injured_corr(
-            n=n, shift=shift, window=window, consider_population=consider_population, shift_one_day=shift_one_day,
+            n=n, shift=offset, window=window, consider_population=consider_population, shift_one_day=shift_one_day,
             sample_cnt=sample_cnt)
         s_corr = self.__series_region_to_english_if_needed(s_corr)
-        print('corr: {}'.format(s_corr[region]))
+        print('{} = {}, window = {}, corr = {}'.format('offset' if self.__in_english else 'shift',
+                                                       offset, window, s_corr[region]))
         s_daily_inc = self.df_virus_daily_inc_injured[region]
         s_daily_inc = s_daily_inc.loc[:date]
         s_move_in = self.get_df_move_in_injured(
-            shift, window, n, consider_population, shift_one_day)[region].loc[self.__first_date:]
+            offset, window, n, consider_population, shift_one_day)[region].loc[self.__first_date:]
         s_move_in = s_move_in.loc[:date]
         if resize:
             s_move_in = s_move_in / s_move_in.max() * s_daily_inc.max()
         # figsize = (6, 3.6)
         figsize = (8, 5)
-        label = 'daily new diagnosed' if self.__in_english else '每日新增确诊人数'
+        # label = 'daily new diagnosed' if self.__in_english else '每日新增确诊人数'
+        if self.__in_english:
+            label = '"new"'
+        else:
+            label = '每日新增确诊人数'
         if self.__in_english:
             s_daily_inc.index.name = 'date'
             s_move_in.index.name = 'date'
         s_daily_inc.plot(color='red', label=label, figsize=figsize)
-        label = 'daily immigration risk' if self.__in_english else '进入人流风险系数'
+        # label = 'daily immigration risk' if self.__in_english else '进入人流风险系数'
+        if self.__in_english:
+            if use_best_fit:
+                label = '"processed risk"'
+            else:
+                label = '"risk"'
+        else:
+            label = '每日新增确诊人数'
         s_move_in.plot(color='blue', label=label, figsize=figsize)
         self.plt.title(region)
         self.plt.legend(loc='upper left')
@@ -1379,6 +1426,196 @@ class CoronavirusAnalyzer:
             win_rate.append(((arr[:, j] == 2).sum() - (arr[:, j] == 1).sum()) / arr.shape[0])
         return pd.Series(win_rate, df_compare1.columns), pd.DataFrame(
             arr, index=df_compare1.index, columns=df_compare1.columns)
+
+    @property
+    def df_risk_and_size(self):
+        df_move_in_risk = self.df_move_in_risk
+        s_total = df_move_in_risk.mean().sort_values(ascending=False)
+        s_total.name = 'mean "risk"'
+        s_to_home = df_move_in_risk.loc[:'2020-01-24'].mean().sort_values(ascending=False)
+        s_to_work = df_move_in_risk.loc['2020-01-25':].mean().sort_values(ascending=False)
+        s_home_work = s_to_home / s_to_work
+        s_to_home.name = 'to home "risk"'
+        s_to_work.name = 'to work "risk"'
+        s_home_work.name = '"risk" home work rate'
+        df_risk = pd.DataFrame([s_total, s_to_home, s_to_work, s_home_work]).T.sort_values(
+            by='mean "risk"', ascending=False)
+        df_curve_in = self.df_curve_in
+        s_total = df_curve_in.mean().sort_values(ascending=False)
+        s_total.name = 'mean "size"'
+        s_to_home = df_curve_in.loc[:'2020-01-24'].mean().sort_values(ascending=False)
+        s_to_home.name = 'to home "size"'
+        s_to_work = df_curve_in.loc['2020-01-25':].mean().sort_values(ascending=False)
+        s_to_work.name = 'to work "size"'
+        s_home_work = s_to_home / s_to_work
+        s_home_work.name = '"size" home work rate'
+        df_move = pd.DataFrame([s_total, s_to_home, s_to_work, s_home_work]).T.sort_values(
+            by='mean "size"', ascending=False)
+        pd.set_option('display.max_columns', None)
+        pd.set_option('display.max_rows', None)
+        df_rank = pd.DataFrame([np.arange(df_risk.shape[0]) + 1]).T
+        df_rank.index = df_risk.index
+        df_rank.columns = ['"risk" rank']
+        df = pd.concat([df_rank, df_risk, df_move], axis=1, sort=False)
+        return df
+
+    @property
+    def df_half_day_corr_offset_window(self):
+        df_new_risk = self.df_new_risk
+        df = df_new_risk[
+            [('new', 'half date idx'), ('new', 'half date'), ('new', 'half date corr'), ('new', 'half date offset'),
+             ('new', 'half date window')]]
+        df.columns = ['half date idx', 'half date', 'corr', 'offset', 'window']
+        df = df.copy()
+        df['offset + window'] = df['offset'] + df['window']
+        df = df.sort_values(by='half date')
+        return df
+
+    @property
+    def df_new_risk(self):
+        df_move_inc_corr = self.df_move_inc_corr
+        df_move_in_risk = self.df_move_in_risk
+        df_curve_in = self.df_curve_in.loc[self.__first_date: self.__last_date]
+        df_virus_daily_inc_injured = self.df_virus_daily_inc_injured
+        if self.__in_english:
+            del df_curve_in['Hubei']
+            if 'Wuhan' in df_curve_in.columns:
+                del df_curve_in['Wuhan']
+        else:
+            del df_curve_in['湖北']
+            if '武汉' in df_curve_in.columns:
+                del df_curve_in['武汉']
+        s_to_home = df_curve_in.loc[:'2020-01-24'].mean().sort_values(ascending=False)
+        s_to_home.name = 'to_home'
+        s_to_work = df_curve_in.loc['2020-01-25':].mean().sort_values(ascending=False)
+        s_to_work.name = 'to_work'
+        s_home_work = s_to_home / s_to_work
+        s_home_work.name = 'home work rate'
+        df_move = pd.DataFrame([s_to_home, s_to_work, s_home_work]).T.sort_values(
+            by='home work rate', ascending=True)
+
+        # 山东省 2020-02-20 日新增的 202 是监狱中累计的人数，并非一天的人数，需要去掉
+        region = 'Shandong' if self.__in_english else '山东'
+        df_virus_daily_inc_injured.loc['2020-02-20', region] = 0
+        if self.__in_english:
+            del df_virus_daily_inc_injured['Hubei']
+        else:
+            del df_virus_daily_inc_injured['湖北']
+
+        dfs_risk_new = []
+        for df_data, col_name in zip([df_curve_in, df_move_in_risk, df_virus_daily_inc_injured],
+                                     ['move', 'risk', 'new']):
+            s_max_val = df_data.max()
+            s_half_val = s_max_val / 2.0
+            top_dates = {}
+            half_dates = {}
+            corrs = {}
+            offsets = {}
+            windows = {}
+            index = df_data.index.tolist()
+            for region in df_data.columns:
+                if region in ['武汉', 'Wuhan', '温州', 'Wenzhou', '湖北', 'Hubei']:
+                    continue
+                top_date = None
+                max_val = s_max_val[region]
+                for date in index:
+                    val = df_data.loc[date, region]
+                    if val == max_val:
+                        top_date = date
+                        break
+                assert top_date is not None
+                top_dates[region] = top_date
+                half_val = s_half_val[region]
+                for row_idx in range(len(index))[::-1]:
+                    last_val = df_data[region].values[row_idx - 1]
+                    this_val = df_data[region].values[row_idx]
+                    if last_val > half_val and this_val <= half_val:
+                        half_date = index[row_idx]
+                        half_dates[region] = half_date
+                        s_corr = df_move_inc_corr.loc[half_date, region]
+                        corrs[region] = s_corr['corr']
+                        offsets[region] = s_corr['shift']
+                        windows[region] = s_corr['window']
+                        break
+
+            s_top_date = pd.Series(top_dates)
+            s_half_date = pd.Series(half_dates)
+            s_top_date.values[:] = Util.str_dates_to_dates(s_top_date)
+            s_half_date.values[:] = Util.str_dates_to_dates(s_half_date)
+            s_turn_half_day_cnt = (s_half_date - s_top_date) / 86400 / 1e9
+            s_corr = pd.Series(corrs)
+            s_offset = pd.Series(offsets)
+            s_window = pd.Series(windows)
+
+            s_max_val.name = 'top value'
+            s_top_date.name = 'top date'
+            s_half_date.name = 'half date'
+            s_half_val.name = 'half value'
+            s_turn_half_day_cnt.name = 'turn half day cnt'
+            s_corr.name = 'half date corr'
+            s_offset.name = 'half date offset'
+            s_window.name = 'half date window'
+
+            df = pd.DataFrame([s_top_date, s_max_val, s_half_date, s_turn_half_day_cnt, s_corr,
+                               s_offset, s_window]).T.sort_values(by='half date', ascending=True)
+            for col, new_col in zip(['top date', 'half date'], ['top date idx', 'half date idx']):
+                df[new_col] = [index.index(str(date)) if isinstance(date, datetime.date) else 0 for date in df[col]]
+                dates = ['-'.join(str(date).split('-')[1:]) for date in df[col]]
+                df[col].values[:] = dates
+            df.columns = pd.MultiIndex.from_product([[col_name], df.columns])
+            dfs_risk_new.append(df)
+
+        df_diagnosed = self.df_virus_daily_injured.iloc[[-1]]
+        if self.__in_english:
+            del df_diagnosed['Hubei']
+        else:
+            del df_diagnosed['湖北']
+        df_diagnosed = df_diagnosed.T
+        df_diagnosed.columns = pd.MultiIndex.from_product([[''], ['diagnosed']])
+        df_diagnosed = df_diagnosed.sort_values(by=('', 'diagnosed'), ascending=False)
+        df_home_work = df_move[['home work rate']]
+        df_home_work = df_home_work.sort_values(by=df_home_work.columns[0], ascending=True)
+        df_home_work.columns = pd.MultiIndex.from_product([[''], df_home_work.columns])
+
+        min_max_scaler = preprocessing.MinMaxScaler()
+        X_min_max = min_max_scaler.fit_transform(df_diagnosed)
+        df_diagnosed_normalized = pd.DataFrame(X_min_max, index=df_diagnosed.index, columns=df_diagnosed.columns)
+        df_diagnosed_normalized.columns = pd.MultiIndex.from_product([[''], ['normalized diagnosed']])
+        X_min_max = min_max_scaler.fit_transform(df_home_work)
+        df_home_work_normalized = pd.DataFrame(X_min_max, index=df_home_work.index, columns=df_home_work.columns)
+        df_home_work_normalized.columns = pd.MultiIndex.from_product([[''], ['normalized home work rate']])
+
+        # df_risk_new = pd.concat([df_diagnosed, df_home_work] + dfs_risk_new, axis=1, sort=False)
+        df_risk_new = pd.concat(
+            [df_home_work, df_home_work_normalized, df_diagnosed, df_diagnosed_normalized] + dfs_risk_new,
+            axis=1, sort=False)
+        df_risk_new = df_risk_new.dropna(how='any', axis=0)
+        df_risk_new[('move', 'top date idx')] = df_risk_new[('move', 'top date idx')].astype(np.int32)
+        df_risk_new[('move', 'half date idx')] = df_risk_new[('move', 'half date idx')].astype(np.int32)
+        df_risk_new[('new', 'top date idx')] = df_risk_new[('new', 'top date idx')].astype(np.int32)
+        df_risk_new[('new', 'half date idx')] = df_risk_new[('new', 'half date idx')].astype(np.int32)
+        df_risk_new[('', 'diagnosed')] = df_risk_new[('', 'diagnosed')].astype(np.int32)
+        # df_risk_new[[('risk', 'turn half day cnt'), ('new', 'turn half day cnt')]]
+        order_types = {}
+        for region in df_risk_new.index:
+            risk_top_date = df_risk_new.loc[region, ('risk', 'top date')]
+            new_top_date = df_risk_new.loc[region, ('new', 'top date')]
+            new_half_date = df_risk_new.loc[region, ('new', 'half date')]
+            risk_half_date = df_risk_new.loc[region, ('risk', 'half date')]
+            if risk_top_date <= new_top_date <= risk_half_date <= new_half_date:
+                order_types[region] = 1
+            elif risk_top_date <= new_top_date <= new_half_date <= risk_half_date:
+                order_types[region] = 2
+            elif risk_top_date <= risk_half_date <= new_top_date <= new_half_date:
+                order_types[region] = 3
+            elif new_top_date <= risk_top_date <= risk_half_date <= new_half_date:
+                order_types[region] = 4
+            elif new_top_date <= risk_top_date <= new_half_date <= risk_half_date:
+                order_types[region] = 5
+            elif new_top_date <= new_half_date <= risk_top_date <= risk_half_date:
+                order_types[region] = 6
+        df_risk_new['', 'ordered'] = pd.Series(order_types)
+        return df_risk_new
 
 
 def train_and_predict(start_date='2020-02-01', end_date=None, get_data_params=None, xgb_params=None, print_log=False):

@@ -30,14 +30,18 @@ def calc_corr(last_date=None, n=3, consider_population=False, shift_one_day=Fals
         if str_date not in data:
             data[str_date] = {}
         analyzer = CoronavirusAnalyzer(str_date, first_date='2020-01-17')
+        s_origin_corr = None
         for shift in range(11):
             for window in range(1, 11):
                 s_corr = analyzer.get_move_in_injured_corr(
                     n=n, shift=shift, window=window, consider_population=consider_population,
                     shift_one_day=shift_one_day, sample_cnt=sample_cnt)
+                if shift == 0 and window == 1:
+                    s_origin_corr = s_corr
                 for region, val in zip(s_corr.index, s_corr.values):
                     if not np.isnan(val) and (region not in data[str_date] or data[str_date][region]['corr'] < val):
-                        data[str_date][region] = {'shift': shift, 'window': window, 'corr': val}
+                        data[str_date][region] = {'shift': shift, 'window': window, 'corr': val,
+                                                  'corr_inc': val - s_origin_corr[region]}
         print('{} 处理完毕'.format(str_date))
         updated = True
         date += datetime.timedelta(days=1)
@@ -69,7 +73,7 @@ def calc_corr(last_date=None, n=3, consider_population=False, shift_one_day=Fals
 if __name__ == '__main__':
     for n in range(3, 4):
         for sample_cnt in [0]:  # , 7, 14, 21, 28, 35
-            last_date = datetime.date(2020, 2, 27)
+            last_date = datetime.date(2020, 2, 29)
             print('n = {}，sample_cnt = {}，处理开始'.format(n, sample_cnt))
             calc_corr(last_date, n=n, sample_cnt=sample_cnt)
             print('n = {}，sample_cnt = {}，处理完毕'.format(n, sample_cnt))
