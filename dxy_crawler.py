@@ -252,9 +252,11 @@ class DxyCrawler:
                                     key = self.__dxy_key_to_key.get(dxy_key)
                                     if key is not None:
                                         self.__total_recent_in_html[key] = int(value)
+                                        if len(self.__total_recent_in_html) == len(self.__dxy_key_to_key):
+                                            break
                         succeed = True
                     except Exception as e:
-                        self.logger.warning('全国数据解析错误，网页可能有变化，需要排查和解决')
+                        self.logger.warning('全国数据解析错误，网页可能有变化，需要排查和解决：{}'.format(e))
                 if not succeed or len(self.__total_recent_in_html) == 0:
                     self.__total_recent_in_html = {'确诊': np.nan, '疑似': np.nan, '死亡': np.nan, '治愈': np.nan}
                 nodes = tree.xpath('//script[@id="getAreaStat"]')

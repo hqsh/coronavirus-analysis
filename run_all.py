@@ -1,4 +1,3 @@
-from calc_corr import calc_corr
 from dxy_daily_crawler import DxyDailyCrawler
 from huiyan_crawler import HuiyanCrawler
 from weather_crawler import WeatherCrawler
