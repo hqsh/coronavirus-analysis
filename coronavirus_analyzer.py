@@ -11,7 +11,8 @@ from util.util import Util, with_logger
 from weather_crawler import WeatherCrawler
 import numpy as np
 import pandas as pd
-import xgboost as xgb
+# import xgboost as xgb
+xgb = None
 import datetime
 import math
 
@@ -762,21 +763,25 @@ class CoronavirusAnalyzer:
         figsize = (8, 5)
         # label = 'daily new diagnosed' if self.__in_english else '每日新增确诊人数'
         if self.__in_english:
-            label = '"new"'
+            label = 'NEW'
         else:
             label = '每日新增确诊人数'
         if self.__in_english:
-            s_daily_inc.index.name = 'date'
-            s_move_in.index.name = 'date'
+            for s in [s_daily_inc, s_move_in]:
+                s.index.name = 'date'
+                s.index = ['{}/{}/{}'.format(date[5:7], date[-2:], date[:4]) for date in s.index]
+        max_val = s_daily_inc.max()
+        s_daily_inc /= max_val
         s_daily_inc.plot(color='red', label=label, figsize=figsize)
         # label = 'daily immigration risk' if self.__in_english else '进入人流风险系数'
         if self.__in_english:
             if use_best_fit:
-                label = '"processed risk"'
+                label = 'PROCESSED RISK'
             else:
-                label = '"risk"'
+                label = 'RISK'
         else:
             label = '每日新增确诊人数'
+        s_move_in /= max_val
         s_move_in.plot(color='blue', label=label, figsize=figsize)
         self.plt.title(region)
         self.plt.legend(loc='upper left')

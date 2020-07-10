@@ -16,3 +16,4 @@ config.ini | 全局配置
 coronavirus_analyzer.py | 疫情分析类
 cache/not_shift_one_day 目录 | 目录下的是人流风险系数的计算结果（不额外偏移1天，用于数据分析）（实时计算速度慢，相应代码有变化需要删除缓存文件）
 cache/shift_one_day 目录 | 目录下的是人流风险系数的计算结果（额外偏移1天，用于疫情预测）（实时计算速度慢，相应代码有变化需要删除缓存文件）
+论文 目录 | 相关论文，发表版：https://publichealth.jmir.org/2020/2/e18638/
